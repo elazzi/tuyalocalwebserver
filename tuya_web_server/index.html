@@ -119,6 +119,7 @@
                 const response = await fetch('/api/discover', { method: 'POST' });
                 const data = await response.json();
                 discoveredDevices = data.devices || {}; // Store for modal
+                sessionStorage.setItem('discoveredDevices', JSON.stringify(discoveredDevices));
                 renderDiscoveredDevices(discoveredDevices);
             } catch (error) { showMessage(`Error discovering devices: ${error.message}`, 'error'); }
             finally { discoverLoader.style.display = 'none'; }
@@ -291,6 +292,14 @@
                 discoverBtn.click();
             } catch (error) {
                 showMessage(`Error importing from cloud: ${error.message}`, 'error');
+            }
+        }
+
+        function loadCachedDiscoveredDevices() {
+            const cachedData = sessionStorage.getItem('discoveredDevices');
+            if (cachedData) {
+                discoveredDevices = JSON.parse(cachedData);
+                renderDiscoveredDevices(discoveredDevices);
             }
         }
 
@@ -499,6 +508,7 @@
         // --- Initial Load ---
         loadConfiguredDevices();
         loadCloudConfigStatus();
+        loadCachedDiscoveredDevices();
     </script>
 </body>
 </html>
