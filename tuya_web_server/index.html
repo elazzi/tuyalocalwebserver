@@ -313,7 +313,10 @@
             }
             configuredDevicesDiv.innerHTML = html;
             for (const deviceId in devices) {
-                getStatus(deviceId, true);
+                const device = devices[deviceId];
+                if (device.default_features && device.default_features.length > 0) {
+                    getStatus(deviceId, true);
+                }
             }
         }
 
