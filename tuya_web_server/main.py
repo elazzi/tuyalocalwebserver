@@ -231,6 +231,19 @@ async def get_devices():
     """Get the list of configured devices."""
     return devices
 
+@app.delete("/api/devices/{device_id}")
+async def remove_device(device_id: str):
+    """Remove a configured device."""
+    if device_id not in devices:
+        raise HTTPException(status_code=404, detail="Device not configured.")
+
+    del devices[device_id]
+
+    with open(DEVICESw_FILE, "w") as f:
+        json.dump(devices, f, indent=4)
+
+    return {"status": "success", "removed_device_id": device_id}
+
 @app.post("/api/devices/{device_id}/control")
 async def control_device(device_id: str, action: ControlAction):
     """Send a control command to a specific device, handling direct and gateway-based connections."""

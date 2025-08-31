@@ -191,6 +191,24 @@
             }
         }
 
+        async function removeDevice(deviceId) {
+            if (!confirm('Are you sure you want to remove this device?')) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to remove device');
+                }
+                showMessage('Device removed successfully!', 'success');
+                await loadConfiguredDevices(); // Reload the list of configured devices
+                discoverBtn.click(); // Trigger a new discovery scan
+            } catch (error) {
+                showMessage(`Error removing device: ${error.message}`, 'error');
+            }
+        }
+
         // --- Gateway Modal Functions ---
         async function openGatewayModal(deviceId, deviceName) {
             document.getElementById('gateway-modal-title').textContent = `Add '${deviceName}' via Gateway`;
@@ -306,7 +324,10 @@
                     <div class="device" id="device-${deviceId}">
                         <div class="device-header">
                             <h3>${device.name || device.device_id}</h3>
-                            <button class="secondary" onclick="getStatus('${deviceId}', false)">Refresh Status</button>
+                            <div>
+                                <button class="secondary" onclick="getStatus('${deviceId}', false)">Refresh Status</button>
+                                <button class="secondary" onclick="removeDevice('${deviceId}')" style="background-color: #dc3545; margin-left: 5px;">Remove</button>
+                            </div>
                         </div>
                         <div class="device-status"></div>
                     </div>`;
