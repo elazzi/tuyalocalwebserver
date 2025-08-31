@@ -53,6 +53,27 @@
         <h1>Tuya Local Control</h1>
         <div id="messages"></div>
 
+        <div id="cloud-config-section" style="background: white; border: 1px solid #e0e0e0; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h2>Cloud Configuration</h2>
+            <p>Import your devices directly from the Tuya Cloud. First, save your API credentials.</p>
+            <div style="margin-bottom: 10px;">
+                <label for="api-key" style="display: block; margin-bottom: 5px;">API Key:</label>
+                <input type="text" id="api-key" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Key">
+            </div>
+            <div style="margin-bottom: 10px;">
+                <label for="api-secret" style="display: block; margin-bottom: 5px;">API Secret:</label>
+                <input type="password" id="api-secret" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Secret">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="api-region" style="display: block; margin-bottom: 5px;">API Region:</label>
+                <input type="text" id="api-region" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., us, eu, cn">
+            </div>
+            <button onclick="saveCloudConfig()">Save Credentials</button>
+            <button onclick="importFromCloud()" style="margin-left: 10px;">Import Devices from Cloud</button>
+            <span id="cloud-config-status" style="margin-left: 15px;"></span>
+        </div>
+        <hr style="margin: 30px 0;">
+
         <h2>1. Discover Devices</h2>
         <button id="discover-btn">Discover Devices</button>
         <span id="discover-loader">Scanning...</span>
@@ -87,6 +108,7 @@
         const configuredDevicesDiv = document.getElementById('configured-devices');
         const messagesDiv = document.getElementById('messages');
         let discoveredDevices = {}; // Store discovered devices globally
+        let configuredDevices = {}; // Store configured devices globally
 
         // --- Core API Functions ---
         discoverBtn.addEventListener('click', async () => {
@@ -97,6 +119,7 @@
                 const response = await fetch('/api/discover', { method: 'POST' });
                 const data = await response.json();
                 discoveredDevices = data.devices || {}; // Store for modal
+                sessionStorage.setItem('discoveredDevices', JSON.stringify(discoveredDevices));
                 renderDiscoveredDevices(discoveredDevices);
             } catch (error) { showMessage(`Error discovering devices: ${error.message}`, 'error'); }
             finally { discoverLoader.style.display = 'none'; }
@@ -122,11 +145,12 @@
             try {
                 const response = await fetch('/api/devices');
                 const devices = await response.json();
+                configuredDevices = devices;
                 renderConfiguredDevices(devices);
             } catch (error) { showMessage(`Error loading configured devices: ${error.message}`, 'error'); }
         }
 
-        async function getStatus(deviceId) {
+        async function getStatus(deviceId, isDefaultOnly = false) {
             const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
             statusDiv.innerHTML = 'Loading status...';
             clearMessages();
@@ -134,7 +158,7 @@
                 const response = await fetch(`/api/devices/${deviceId}/status`);
                 if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to get status'); }
                 const data = await response.json();
-                renderDeviceStatus(deviceId, data);
+                renderDeviceStatus(deviceId, data, isDefaultOnly);
             } catch (error) {
                 statusDiv.innerHTML = `<span style="color: red;">Could not load status.</span>`;
                 showMessage(`Error getting status for ${deviceId}: ${error.message}`, 'error');
@@ -160,6 +184,122 @@
                 getStatus(deviceId); // On failure, refresh to get actual current state
             } finally {
                 statusDiv.style.opacity = '1';
+            }
+        }
+
+        async function saveDefaultFeatures(deviceId) {
+            const checkboxes = document.querySelectorAll(`#device-${deviceId} .device-status input[type="checkbox"][data-feature-code]`);
+            const features = [];
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    features.push(cb.dataset.featureCode);
+                }
+            });
+
+            try {
+                const response = await fetch(`/api/devices/${deviceId}/set_default_features`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ features: features })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to save default features'); }
+                // Update the global configuredDevices object
+                if(configuredDevices[deviceId]) {
+                    configuredDevices[deviceId].default_features = features;
+                }
+                showMessage('Default features saved successfully!', 'success');
+            } catch (error) {
+                showMessage(`Error saving default features: ${error.message}`, 'error');
+            }
+        }
+
+        async function removeDevice(deviceId) {
+            if (!confirm('Are you sure you want to remove this device?')) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to remove device');
+                }
+                showMessage('Device removed successfully!', 'success');
+                await loadConfiguredDevices(); // Reload the list of configured devices
+                discoverBtn.click(); // Trigger a new discovery scan
+            } catch (error) {
+                showMessage(`Error removing device: ${error.message}`, 'error');
+            }
+        }
+
+        async function saveCloudConfig() {
+            const apiKey = document.getElementById('api-key').value.trim();
+            const apiSecret = document.getElementById('api-secret').value.trim();
+            const apiRegion = document.getElementById('api-region').value.trim();
+
+            if (!apiKey || !apiSecret || !apiRegion) {
+                showMessage('Please fill in all cloud credential fields.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/cloud/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, api_region: apiRegion })
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to save cloud config');
+                }
+                showMessage('Cloud credentials saved successfully!', 'success');
+                loadCloudConfigStatus();
+            } catch (error) {
+                showMessage(`Error saving credentials: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadCloudConfigStatus() {
+            const statusSpan = document.getElementById('cloud-config-status');
+            try {
+                const response = await fetch('/api/cloud/config');
+                const data = await response.json();
+                if (data.configured) {
+                    statusSpan.innerHTML = `Credentials saved for region: <strong>${data.region}</strong>.`;
+                    statusSpan.style.color = 'green';
+                    if(document.getElementById('api-region')) {
+                        document.getElementById('api-region').value = data.region;
+                    }
+                } else {
+                    statusSpan.innerHTML = 'Credentials not configured.';
+                    statusSpan.style.color = 'red';
+                }
+            } catch (error) {
+                statusSpan.innerHTML = 'Could not retrieve cloud config status.';
+                statusSpan.style.color = 'red';
+            }
+        }
+
+        async function importFromCloud() {
+            showMessage('Importing devices from cloud...', 'info');
+            try {
+                const response = await fetch('/api/cloud/import', { method: 'POST' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to import from cloud');
+                }
+                const result = await response.json();
+                showMessage(`Successfully imported ${result.device_count} devices! Triggering local discovery...`, 'success');
+                discoverBtn.click();
+            } catch (error) {
+                showMessage(`Error importing from cloud: ${error.message}`, 'error');
+            }
+        }
+
+        function loadCachedDiscoveredDevices() {
+            const cachedData = sessionStorage.getItem('discoveredDevices');
+            if (cachedData) {
+                discoveredDevices = JSON.parse(cachedData);
+                renderDiscoveredDevices(discoveredDevices);
             }
         }
 
@@ -245,9 +385,12 @@
                     let actionButton = '<span class="configured-badge">Configured</span>';
                     if (!device.configured) {
                         if (device.has_ip) {
-                            actionButton = `<button onclick="addDevice('${device.id}', '${device.ip}')">Add Device</button>`;
+                            actionButton = `<button onclick="addDevice('${device.id}', '${device.ip}')">Add (Local)</button>`;
                         } else {
-                            actionButton = `<button class="secondary" onclick="openGatewayModal('${device.id}', '${device.name || 'Unknown'}')">Add via Gateway</button>`;
+                            actionButton = `
+                                <button class="secondary" onclick="addDevice('${device.id}', null)">Add (Cloud)</button>
+                                <button class="secondary" onclick="openGatewayModal('${device.id}', '${device.name || 'Unknown'}')" style="margin-left: 5px;">Add via Gateway</button>
+                            `;
                         }
                     } else if (device.is_zigbee) {
                         actionButton = '<span class="configured-badge" style="background-color: #17a2b8;">Zigbee</span>';
@@ -277,23 +420,47 @@
                 html += `
                     <div class="device" id="device-${deviceId}">
                         <div class="device-header">
-                            <h3>${device.name || device.device_id}</h3>
-                            <button class="secondary" onclick="getStatus('${deviceId}')">Refresh Status</button>
+                            <div style="display: flex; align-items: center;">
+                                ${device.icon ? `<img src="${device.icon}" alt="Device Icon" style="width: 40px; height: 40px; margin-right: 15px;">` : ''}
+                                <div>
+                                    <h3 style="margin: 0;">
+                                        ${device.name || 'Unknown Device'}
+                                        ${device.control_method === 'cloud' ? ' ☁️' : ''}
+                                    </h3>
+                                    <small style="color: #666;">ID: ${device.device_id}</small>
+                                </div>
+                            </div>
+                            <div>
+                                <button class="secondary" onclick="getStatus('${deviceId}', false)">Refresh Status</button>
+                                <button class="secondary" onclick="removeDevice('${deviceId}')" style="background-color: #dc3545; margin-left: 5px;">Remove</button>
+                            </div>
                         </div>
-                        <div class="device-status">Click "Refresh Status" to see device controls.</div>
+                        <div class="device-status"></div>
                     </div>`;
             }
             configuredDevicesDiv.innerHTML = html;
+            for (const deviceId in devices) {
+                const device = devices[deviceId];
+                if (device.default_features && device.default_features.length > 0) {
+                    getStatus(deviceId, true);
+                }
+            }
         }
 
-        function renderDeviceStatus(deviceId, data) {
+        function renderDeviceStatus(deviceId, data, isDefaultOnly = false) {
             const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
             const { status, device_info } = data;
             const mapping = device_info.mapping || {};
             const codeToDpId = Object.fromEntries(Object.entries(mapping).map(([dpId, val]) => [val.code, dpId]));
 
-            let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th></tr></thead><tbody>`;
+            const device = configuredDevices[deviceId];
+            const defaultFeatures = device.default_features || [];
+
+            let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th><th>Default</th></tr></thead><tbody>`;
             for (const codeName in status) {
+                if (isDefaultOnly && !defaultFeatures.includes(codeName)) {
+                    continue; // Skip non-default features if in default-only mode
+                }
                 const item = status[codeName];
                 const dpId = codeToDpId[codeName];
                 const dpInfo = dpId ? mapping[dpId] : null;
@@ -331,7 +498,10 @@
                         } else { controlHtml = 'Read-only'; }
                     } catch (e) { console.error("Error parsing DP values for", codeName, e); controlHtml = 'Error'; }
                 }
-                tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td></tr>`;
+                const isDefault = defaultFeatures.includes(codeName);
+                const checked = isDefault ? 'checked' : '';
+                const defaultCheckbox = `<input type="checkbox" onchange="saveDefaultFeatures('${deviceId}')" data-feature-code="${codeName}" ${checked}>`;
+                tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td><td>${defaultCheckbox}</td></tr>`;
             }
             tableHtml += '</tbody></table>';
             statusDiv.innerHTML = tableHtml;
@@ -343,6 +513,8 @@
 
         // --- Initial Load ---
         loadConfiguredDevices();
+        loadCloudConfigStatus();
+        loadCachedDiscoveredDevices();
     </script>
 </body>
 </html>

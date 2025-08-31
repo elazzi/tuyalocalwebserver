@@ -21,10 +21,31 @@ DEVICES_FILE = os.path.join(script_dir, "devices.json")
 DEVICESw_FILE = os.path.join(script_dir, "devicesw.json")
 ZIGBEE_DEVICES_FILE = os.path.join(script_dir, "zigbee_devices.json")
 TUYA_RAW_FILE = os.path.join(script_dir, "devices.json")
+CLOUD_CONFIG_FILE = os.path.join(script_dir, "cloud_config.json")
 
 # In-memory storage for configured devices
 devices = {}
 zigbee_devices = {}
+
+def get_cloud_api():
+    """Get an instance of the Tuya Cloud API."""
+    if not os.path.exists(CLOUD_CONFIG_FILE):
+        raise HTTPException(status_code=400, detail="Cloud credentials not configured.")
+    try:
+        with open(CLOUD_CONFIG_FILE, "r") as f:
+            config = json.load(f)
+        if not all(k in config for k in ["api_key", "api_secret", "api_region"]):
+            raise HTTPException(status_code=400, detail="Cloud credentials incomplete.")
+        return tinytuya.Cloud(
+            apiRegion=config["api_region"],
+            apiKey=config["api_key"],
+            apiSecret=config["api_secret"]
+        )
+    except (json.JSONDecodeError, FileNotFoundError):
+        raise HTTPException(status_code=500, detail="Could not read cloud configuration.")
+    except Exception as e:
+        logger.exception("Error instantiating Tuya Cloud API")
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Tuya Cloud: {str(e)}")
 
 def load_zigbee_devices():
     """Load zigbee devices from file, ensuring it's a dictionary."""
@@ -57,7 +78,7 @@ load_zigbee_devices()
 
 class DiscoveredDevice(BaseModel):
     device_id: str
-    ip: str
+    ip: Optional[str] = None
 
 class DeviceViaGateway(BaseModel):
     device_id: str
@@ -68,6 +89,14 @@ class ControlAction(BaseModel):
     command: str
     dp_index: Optional[int] = None
     value: Optional[Any] = None
+
+class DefaultFeatures(BaseModel):
+    features: list[str]
+
+class CloudConfig(BaseModel):
+    api_key: str
+    api_secret: str
+    api_region: str
 
 @app.get("/")
 async def read_index():
@@ -166,7 +195,10 @@ async def add_device(device: DiscoveredDevice):
         "name": found_device_data.get('name'),
         "version": found_device_data.get('version', '3.3'),
         "product_name": found_device_data.get('product_name'),
-        "mapping": found_device_data.get('mapping', {})
+        "mapping": found_device_data.get('mapping', {}),
+        "icon": found_device_data.get('icon'),
+        "control_method": "cloud" if device.ip is None else "local",
+        "default_features": []
     }
     with open(DEVICESw_FILE, "w") as f:
         json.dump(devices, f, indent=4)
@@ -200,7 +232,10 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
         "version": found_device_data.get('version', '3.3'),
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {}),
-        "gateway_id": device_data.gateway_id # Link to the gateway
+        "icon": found_device_data.get('icon'),
+        "gateway_id": device_data.gateway_id, # Link to the gateway
+        "control_method": "local", # Sub-devices are always local via gateway
+        "default_features": []
     }
 
     # Save back to the devices file
@@ -209,62 +244,168 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
 
     return {"status": "success", "device_id": device_data.device_id}
 
+@app.post("/api/devices/{device_id}/set_default_features")
+async def set_default_features(device_id: str, features: DefaultFeatures):
+    if device_id not in devices:
+        raise HTTPException(status_code=404, detail="Device not configured.")
+
+    devices[device_id]['default_features'] = features.features
+
+    with open(DEVICESw_FILE, "w") as f:
+        json.dump(devices, f, indent=4)
+
+    return {"status": "success", "device_id": device_id, "default_features": features.features}
+
+@app.post("/api/cloud/config")
+async def save_cloud_config(config: CloudConfig):
+    """Save Tuya Cloud API credentials."""
+    with open(CLOUD_CONFIG_FILE, "w") as f:
+        json.dump(config.model_dump(), f, indent=4)
+    return {"status": "success"}
+
+@app.get("/api/cloud/config")
+async def get_cloud_config_status():
+    """Get the status of Tuya Cloud API credentials."""
+    if not os.path.exists(CLOUD_CONFIG_FILE):
+        return {"configured": False}
+    try:
+        with open(CLOUD_CONFIG_FILE, "r") as f:
+            config_data = json.load(f)
+        return {
+            "configured": bool(config_data.get("api_key") and config_data.get("api_secret")),
+            "region": config_data.get("api_region")
+        }
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {"configured": False}
+
+@app.post("/api/cloud/import")
+async def import_from_cloud():
+    """Import devices from Tuya Cloud and overwrite devices.json."""
+    if not os.path.exists(CLOUD_CONFIG_FILE):
+        raise HTTPException(status_code=400, detail="Cloud credentials not configured.")
+
+    try:
+        with open(CLOUD_CONFIG_FILE, "r") as f:
+            config = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        raise HTTPException(status_code=500, detail="Could not read cloud configuration.")
+
+    if not all(k in config for k in ["api_key", "api_secret", "api_region"]):
+        raise HTTPException(status_code=400, detail="Cloud credentials incomplete.")
+
+    try:
+        cloud = tinytuya.Cloud(
+            apiRegion=config["api_region"],
+            apiKey=config["api_key"],
+            apiSecret=config["api_secret"]
+        )
+        # getdevices() returns a list of devices, which is what the app expects
+        devices_from_cloud = cloud.getdevices()
+
+        with open(TUYA_RAW_FILE, "w") as f:
+            json.dump(devices_from_cloud, f, indent=4)
+
+        return {"status": "success", "device_count": len(devices_from_cloud)}
+    except Exception as e:
+        logger.exception("Error importing from Tuya Cloud")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during cloud import: {str(e)}")
+
 @app.get("/api/devices")
 async def get_devices():
     """Get the list of configured devices."""
     return devices
 
+@app.delete("/api/devices/{device_id}")
+async def remove_device(device_id: str):
+    """Remove a configured device."""
+    if device_id not in devices:
+        raise HTTPException(status_code=404, detail="Device not configured.")
+
+    del devices[device_id]
+
+    with open(DEVICESw_FILE, "w") as f:
+        json.dump(devices, f, indent=4)
+
+    return {"status": "success", "removed_device_id": device_id}
+
 @app.post("/api/devices/{device_id}/control")
 async def control_device(device_id: str, action: ControlAction):
-    """Send a control command to a specific device, handling direct and gateway-based connections."""
+    """Send a control command to a specific device, handling both local and cloud control."""
     if device_id not in devices:
         raise HTTPException(status_code=404, detail="Device not configured.")
 
     device_info = devices[device_id]
-    gateway_id = device_info.get('gateway_id')
+    control_method = device_info.get("control_method", "local")
 
     try:
-        target_device = None
-        if gateway_id:
-            # This is a sub-device, requires gateway connection
-            if gateway_id not in devices:
-                raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
+        if control_method == "cloud":
+            cloud = get_cloud_api()
 
-            gateway_info = devices[gateway_id]
-            gateway_device = tinytuya.Device(
-                dev_id=gateway_info['device_id'],
-                address=gateway_info['ip'],
-                local_key=gateway_info['local_key'],
-                persist=True,
-                version=float(gateway_info.get('version', 3.3))
-            )
-            # The 'target_device' is the sub-device, linked to the gateway
-            target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
-        else:
-            # This is a direct-connected (IP) device
-            if not device_info.get('ip') or not device_info.get('local_key'):
-                 raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
-            target_device = tinytuya.OutletDevice(
-                dev_id=device_info['device_id'],
-                address=device_info['ip'],
-                local_key=device_info['local_key']
-            )
-            target_device.set_version(float(device_info.get('version', 3.3)))
-            target_device.set_socketPersistent(False)
+            # Find the code for the given dp_index from the mapping
+            mapping = device_info.get('mapping', {})
+            dp_info = mapping.get(str(action.dp_index))
 
-        logger.debug(f"Executing command '{action.command}' on device {device_id} with payload: {action.model_dump()}")
+            if not dp_info or 'code' not in dp_info:
+                 raise HTTPException(status_code=400, detail=f"Could not find a code for DP index {action.dp_index} in the device mapping.")
 
-        # Execute the command
-        if action.command == "turn_on":
-            target_device.turn_on(switch=action.dp_index or 1)
-        elif action.command == "turn_off":
-            target_device.turn_off(switch=action.dp_index or 1)
-        elif action.command == "set_value":
-            if action.dp_index is None or action.value is None:
-                raise HTTPException(status_code=400, detail="DP index and value are required for set_value.")
-            target_device.set_value(action.dp_index, action.value)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported command: {action.command}")
+            dp_code = dp_info['code']
+
+            commands = []
+            if action.command == "turn_on":
+                commands.append({'code': dp_code, 'value': True})
+            elif action.command == "turn_off":
+                commands.append({'code': dp_code, 'value': False})
+            elif action.command == "set_value":
+                if action.value is None:
+                    raise HTTPException(status_code=400, detail="Value is required for set_value.")
+                commands.append({'code': dp_code, 'value': action.value})
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported command: {action.command}")
+
+            logger.debug(f"Executing cloud command on {device_id}: {commands}")
+            cloud.sendcommand(device_id, commands)
+        else:  # local or gateway
+            gateway_id = device_info.get('gateway_id')
+            target_device = None
+            if gateway_id:
+                # This is a sub-device, requires gateway connection
+                if gateway_id not in devices:
+                    raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
+
+                gateway_info = devices[gateway_id]
+                gateway_device = tinytuya.Device(
+                    dev_id=gateway_info['device_id'],
+                    address=gateway_info['ip'],
+                    local_key=gateway_info['local_key'],
+                    persist=True,
+                    version=float(gateway_info.get('version', 3.3))
+                )
+                target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
+            else:
+                # This is a direct-connected (IP) device
+                if not device_info.get('ip') or not device_info.get('local_key'):
+                    raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
+                target_device = tinytuya.OutletDevice(
+                    dev_id=device_info['device_id'],
+                    address=device_info['ip'],
+                    local_key=device_info['local_key']
+                )
+                target_device.set_version(float(device_info.get('version', 3.3)))
+                target_device.set_socketPersistent(False)
+
+            logger.debug(f"Executing local command '{action.command}' on device {device_id} with payload: {action.model_dump()}")
+
+            # Execute the command
+            if action.command == "turn_on":
+                target_device.turn_on(switch=action.dp_index or 1)
+            elif action.command == "turn_off":
+                target_device.turn_off(switch=action.dp_index or 1)
+            elif action.command == "set_value":
+                if action.dp_index is None or action.value is None:
+                    raise HTTPException(status_code=400, detail="DP index and value are required for set_value.")
+                target_device.set_value(action.dp_index, action.value)
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported command: {action.command}")
 
         # After control, fetch the updated status
         new_status = await get_device_status(device_id)
@@ -276,39 +417,46 @@ async def control_device(device_id: str, action: ControlAction):
 
 @app.get("/api/devices/{device_id}/status")
 async def get_device_status(device_id: str):
-    """Get the status of a specific device, handling direct and gateway-based connections."""
+    """Get the status of a specific device, handling both local and cloud control."""
     if device_id not in devices:
         raise HTTPException(status_code=404, detail="Device not configured.")
 
     device_info = devices[device_id]
-    gateway_id = device_info.get('gateway_id')
+    control_method = device_info.get("control_method", "local")
 
     try:
-        target_device = None
-        if gateway_id:
-            if gateway_id not in devices:
-                raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
+        status = {}
+        if control_method == "cloud":
+            cloud = get_cloud_api()
+            status = cloud.getstatus(device_id)
+        else:  # local or gateway
+            gateway_id = device_info.get('gateway_id')
+            target_device = None
+            if gateway_id:
+                if gateway_id not in devices:
+                    raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
 
-            gateway_info = devices[gateway_id]
-            gateway_device = tinytuya.Device(
-                dev_id=gateway_info['device_id'],
-                address=gateway_info['ip'],
-                local_key=gateway_info['local_key'],
-                persist=True,
-                version=float(gateway_info.get('version', 3.3))
-            )
-            target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
-        else:
-            if not device_info.get('ip') or not device_info.get('local_key'):
-                 raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
-            target_device = tinytuya.OutletDevice(
-                dev_id=device_info['device_id'],
-                address=device_info['ip'],
-                local_key=device_info['local_key']
-            )
-            target_device.set_version(float(device_info.get('version', 3.3)))
+                gateway_info = devices[gateway_id]
+                gateway_device = tinytuya.Device(
+                    dev_id=gateway_info['device_id'],
+                    address=gateway_info['ip'],
+                    local_key=gateway_info['local_key'],
+                    persist=True,
+                    version=float(gateway_info.get('version', 3.3))
+                )
+                target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
+            else:
+                if not device_info.get('ip') or not device_info.get('local_key'):
+                    raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
+                target_device = tinytuya.OutletDevice(
+                    dev_id=device_info['device_id'],
+                    address=device_info['ip'],
+                    local_key=device_info['local_key']
+                )
+                target_device.set_version(float(device_info.get('version', 3.3)))
 
-        status = target_device.status()
+            status = target_device.status()
+
         if not (status and isinstance(status, dict) and 'dps' in status):
             raise Exception("Failed to get a valid status from device.")
 
