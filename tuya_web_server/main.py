@@ -168,7 +168,7 @@ async def add_device(device: DiscoveredDevice):
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {})
     }
-    with open(DEVICES_FILE, "w") as f:
+    with open(DEVICESw_FILE, "w") as f:
         json.dump(devices, f, indent=4)
     return {"status": "success", "device_id": device.device_id}
 
@@ -204,7 +204,7 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
     }
 
     # Save back to the devices file
-    with open(DEVICES_FILE, "w") as f:
+    with open(DEVICESw_FILE, "w") as f:
         json.dump(devices, f, indent=4)
 
     return {"status": "success", "device_id": device_data.device_id}
