@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tuya Local Control</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; background-color: #f4f7f6; }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        h1, h2 { color: #333; }
+        hr { border: 0; border-top: 1px solid #e0e0e0; }
+
+        button { background-color: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; transition: background-color: 0.3s; }
+        button:hover { background-color: #0056b3; }
+        button.secondary { background-color: #6c757d; }
+        button.secondary:hover { background-color: #5a6268; }
+
+        .device { background: white; border: 1px solid #e0e0e0; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .device-header { display: flex; justify-content: space-between; align-items: center; }
+        .device-header h3 { margin: 0; color: #0056b3; }
+
+        #discover-loader { display: none; margin-left: 10px; }
+        .discovered-item { background: #fff; margin-bottom: 10px; padding: 15px; border-radius: 5px; border: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+
+        .configured-badge { background: #28a745; color: white; padding: 5px 10px; border-radius: 3px; font-size: 0.9em; }
+
+        .message { padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        .message.success { background-color: #d4edda; color: #155724; }
+        .message.error { background-color: #f8d7da; color: #721c24; }
+
+        .status-table { margin-top: 15px; width: 100%; border-collapse: collapse; }
+        .status-table th, .status-table td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
+        .status-table th { background-color: #f8f9fa; }
+        .status-table td:first-child { font-weight: bold; color: #555; }
+        .status-table td:nth-child(3) { text-align: center; }
+
+        /* Toggle Switch CSS */
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; }
+        input:checked + .slider { background-color: #28a745; }
+        .slider.round { border-radius: 24px; }
+        .slider.round:before { border-radius: 50%; }
+
+        /* Slider Control CSS */
+        .slider-container { display: flex; align-items: center; justify-content: center; }
+        .slider-container input[type=range] { flex-grow: 1; max-width: 150px; margin-right: 15px; }
+        .slider-container span { font-weight: bold; min-width: 30px; text-align: right; }
+        select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Tuya Local Control</h1>
+        <div id="messages"></div>
+
+        <h2>1. Discover Devices</h2>
+        <button id="discover-btn">Discover Devices</button>
+        <span id="discover-loader">Scanning...</span>
+
+        <!-- Modal for adding a device via a gateway -->
+        <div id="add-via-gateway-modal" style="display:none; background: #f9f9f9; border: 1px solid #ddd; padding: 20px; margin-top: 20px; border-radius: 8px;">
+            <h3 id="gateway-modal-title">Add Device via Gateway</h3>
+            <input type="hidden" id="gateway-device-id-hidden">
+            <div style="margin-bottom: 15px;">
+                <label for="gateway-select" style="display: block; margin-bottom: 5px;">Select Gateway:</label>
+                <select id="gateway-select" style="width: 100%; padding: 8px;"></select>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="new-device-name" style="display: block; margin-bottom: 5px;">Device Name:</label>
+                <input type="text" id="new-device-name" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., Living Room Sensor">
+            </div>
+            <button onclick="saveDeviceViaGateway()">Save Device</button>
+            <button class="secondary" onclick="closeGatewayModal()" style="margin-left: 5px;">Cancel</button>
+        </div>
+
+        <div id="discovered-devices"></div>
+        <hr style="margin: 30px 0;">
+
+        <h2>2. Configured Devices</h2>
+        <div id="configured-devices"></div>
+    </div>
+
+    <script>
+        const discoverBtn = document.getElementById('discover-btn');
+        const discoverLoader = document.getElementById('discover-loader');
+        const discoveredDevicesDiv = document.getElementById('discovered-devices');
+        const configuredDevicesDiv = document.getElementById('configured-devices');
+        const messagesDiv = document.getElementById('messages');
+        let discoveredDevices = {}; // Store discovered devices globally
+
+        // --- Core API Functions ---
+        discoverBtn.addEventListener('click', async () => {
+            discoverLoader.style.display = 'inline-block';
+            discoveredDevicesDiv.innerHTML = '';
+            clearMessages();
+            try {
+                const response = await fetch('/api/discover', { method: 'POST' });
+                const data = await response.json();
+                discoveredDevices = data.devices || {}; // Store for modal
+                renderDiscoveredDevices(discoveredDevices);
+            } catch (error) { showMessage(`Error discovering devices: ${error.message}`, 'error'); }
+            finally { discoverLoader.style.display = 'none'; }
+        });
+        
+        async function addDevice(deviceId, ip) {
+            clearMessages();
+            try {
+                const response = await fetch('/api/add_device', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: deviceId, ip: ip })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to add device'); }
+                const data = await response.json();
+                showMessage(`Device ${data.device_id} added successfully!`, 'success');
+                await loadConfiguredDevices();
+                discoverBtn.click();
+            } catch (error) { showMessage(`Error adding device: ${error.message}`, 'error'); }
+        }
+
+        async function loadConfiguredDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                renderConfiguredDevices(devices);
+            } catch (error) { showMessage(`Error loading configured devices: ${error.message}`, 'error'); }
+        }
+
+        async function getStatus(deviceId) {
+            const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
+            statusDiv.innerHTML = 'Loading status...';
+            clearMessages();
+            try {
+                const response = await fetch(`/api/devices/${deviceId}/status`);
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to get status'); }
+                const data = await response.json();
+                renderDeviceStatus(deviceId, data);
+            } catch (error) {
+                statusDiv.innerHTML = `<span style="color: red;">Could not load status.</span>`;
+                showMessage(`Error getting status for ${deviceId}: ${error.message}`, 'error');
+            }
+        }
+
+        async function controlDevice(deviceId, command, dpIndex, value) {
+            const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
+            statusDiv.style.opacity = '0.5';
+            clearMessages();
+            try {
+                const body = { command, dp_index: dpIndex, value };
+                const response = await fetch(`/api/devices/${deviceId}/control`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to control device'); }
+                const data = await response.json();
+                renderDeviceStatus(deviceId, data); // Re-render with fresh state from API
+            } catch (error) {
+                showMessage(`Error controlling device: ${error.message}`, 'error');
+                getStatus(deviceId); // On failure, refresh to get actual current state
+            } finally {
+                statusDiv.style.opacity = '1';
+            }
+        }
+
+        // --- Gateway Modal Functions ---
+        async function openGatewayModal(deviceId, deviceName) {
+            document.getElementById('gateway-modal-title').textContent = `Add '${deviceName}' via Gateway`;
+            document.getElementById('gateway-device-id-hidden').value = deviceId;
+            document.getElementById('new-device-name').value = deviceName; // Pre-fill the name
+
+            const select = document.getElementById('gateway-select');
+            select.innerHTML = '<option value="">-- Select a Gateway --</option>';
+
+            // Fetch configured devices to populate gateway list
+            try {
+                const response = await fetch('/api/devices');
+                const configured = await response.json();
+                const gateways = Object.values(configured).filter(d => d.ip); // Gateways must have an IP
+
+                if (gateways.length === 0) {
+                    showMessage('No potential gateways (configured devices with an IP) found.', 'error');
+                    return;
+                }
+
+                gateways.forEach(gateway => {
+                    const option = document.createElement('option');
+                    option.value = gateway.device_id;
+                    option.textContent = `${gateway.name || 'Unknown'} (ID: ${gateway.device_id})`;
+                    select.appendChild(option);
+                });
+
+                 document.getElementById('add-via-gateway-modal').style.display = 'block';
+            } catch (error) {
+                showMessage(`Error loading gateways: ${error.message}`, 'error');
+            }
+        }
+
+        function closeGatewayModal() {
+            document.getElementById('add-via-gateway-modal').style.display = 'none';
+        }
+
+        async function saveDeviceViaGateway() {
+            const newDeviceId = document.getElementById('gateway-device-id-hidden').value;
+            const gatewayId = document.getElementById('gateway-select').value;
+            const newDeviceName = document.getElementById('new-device-name').value;
+
+            if (!gatewayId) {
+                showMessage('Please select a gateway.', 'error');
+                return;
+            }
+            if (!newDeviceName.trim()) {
+                showMessage('Please enter a name for the new device.', 'error');
+                return;
+            }
+
+            clearMessages();
+            try {
+                const response = await fetch('/api/add_device_via_gateway', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: newDeviceId, name: newDeviceName, gateway_id: gatewayId })
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to add device via gateway');
+                }
+                const data = await response.json();
+                showMessage(`Device ${data.device_id} added successfully via gateway!`, 'success');
+                closeGatewayModal();
+                await loadConfiguredDevices();
+                discoverBtn.click();
+            } catch (error) {
+                showMessage(`Error adding device: ${error.message}`, 'error');
+            }
+        }
+
+        // --- Rendering Functions ---
+        function renderDiscoveredDevices(devices) {
+            const discovered = Object.values(devices);
+            let html = discovered.length > 0 ? '<h3>Found Devices:</h3>' : "<p>No new devices found on the network.</p>";
+            if (discovered.length > 0) {
+                 discovered.forEach(device => {
+                    const ipInfo = device.has_ip ? `<strong>IP:</strong> ${device.ip}` : '<strong>IP:</strong> Not found (potential sub-device)';
+                    let actionButton = '<span class="configured-badge">Configured</span>';
+                    if (!device.configured) {
+                        if (device.has_ip) {
+                            actionButton = `<button onclick="addDevice('${device.id}', '${device.ip}')">Add Device</button>`;
+                        } else {
+                            actionButton = `<button class="secondary" onclick="openGatewayModal('${device.id}', '${device.name || 'Unknown'}')">Add via Gateway</button>`;
+                        }
+                    } else if (device.is_zigbee) {
+                        actionButton = '<span class="configured-badge" style="background-color: #17a2b8;">Zigbee</span>';
+                    }
+
+                    html += `
+                        <div class="discovered-item">
+                            <div class="device-info">
+                                <div><strong>ID:</strong> ${device.id}</div>
+                                <div><strong>Name:</strong> ${device.name || 'Unknown'}</div>
+                                <div>${ipInfo}</div>
+                                <div><strong>Model:</strong> ${device.product_name || 'Unknown'}</div>
+                            </div>
+                            <div class="device-actions">
+                                ${actionButton}
+                            </div>
+                        </div>`;
+                });
+            }
+            discoveredDevicesDiv.innerHTML = html;
+        }
+
+        function renderConfiguredDevices(devices) {
+            let html = Object.keys(devices).length > 0 ? '' : "<p>No devices have been configured yet.</p>";
+            for (const deviceId in devices) {
+                const device = devices[deviceId];
+                html += `
+                    <div class="device" id="device-${deviceId}">
+                        <div class="device-header">
+                            <h3>${device.name || device.device_id}</h3>
+                            <button class="secondary" onclick="getStatus('${deviceId}')">Refresh Status</button>
+                        </div>
+                        <div class="device-status">Click "Refresh Status" to see device controls.</div>
+                    </div>`;
+            }
+            configuredDevicesDiv.innerHTML = html;
+        }
+
+        function renderDeviceStatus(deviceId, data) {
+            const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
+            const { status, device_info } = data;
+            const mapping = device_info.mapping || {};
+            const codeToDpId = Object.fromEntries(Object.entries(mapping).map(([dpId, val]) => [val.code, dpId]));
+
+            let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th></tr></thead><tbody>`;
+            for (const codeName in status) {
+                const item = status[codeName];
+                const dpId = codeToDpId[codeName];
+                const dpInfo = dpId ? mapping[dpId] : null;
+
+                let controlHtml = 'N/A';
+                let displayValue = item.value;
+                if (typeof displayValue === 'boolean') displayValue = displayValue ? 'On' : 'Off';
+                let unit = '';
+
+                if (dpInfo && dpInfo.code) {
+                    try {
+                        const values = (typeof dpInfo.values === 'string' && dpInfo.values.trim() !== '') ? JSON.parse(dpInfo.values) : {};
+                        if (dpInfo.type === 'Integer' && values.scale > 0) displayValue = (item.value / Math.pow(10, values.scale)).toFixed(values.scale);
+                        if (values.unit) unit = ` ${values.unit}`;
+
+                        const onchangeAction = `controlDevice('${deviceId}', 'set_value', ${dpId}, this.value)`;
+
+                        if (dpInfo.type === 'Boolean') {
+                            const command = item.value ? 'turn_off' : 'turn_on';
+                            const isChecked = item.value ? 'checked' : '';
+                            controlHtml = `<label class="switch"><input type="checkbox" ${isChecked} onchange="controlDevice('${deviceId}', '${command}', ${dpId})"><span class="slider round"></span></label>`;
+                        } else if (dpInfo.type === 'Enum' && values.range) {
+                            const options = values.range.map(val => `<option value="${val}" ${val === item.value ? 'selected' : ''}>${val}</option>`).join('');
+                            controlHtml = `<select onchange="${onchangeAction}">${options}</select>`;
+                        } else if (dpInfo.type === 'Integer' && values.min !== undefined) {
+                            const scaledValue = (item.value / Math.pow(10, values.scale || 0)).toFixed(values.scale || 0);
+                            controlHtml = `
+                                <div class="slider-container">
+                                    <input type="range" min="${values.min}" max="${values.max}" step="${values.step || 1}" value="${item.value}"
+                                           onchange="${onchangeAction.replace('this.value', 'parseInt(this.value)')}"
+                                           oninput="this.nextElementSibling.innerText = (this.value / ${Math.pow(10, values.scale || 0)}).toFixed(${values.scale || 0})">
+                                    <span>${scaledValue}</span>
+                                </div>`;
+                            displayValue = '';
+                        } else { controlHtml = 'Read-only'; }
+                    } catch (e) { console.error("Error parsing DP values for", codeName, e); controlHtml = 'Error'; }
+                }
+                tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td></tr>`;
+            }
+            tableHtml += '</tbody></table>';
+            statusDiv.innerHTML = tableHtml;
+        }
+
+        // --- Utility Functions ---
+        function showMessage(message, type = 'info') { messagesDiv.innerHTML = `<div class="message ${type}">${message}</div>`; }
+        function clearMessages() { messagesDiv.innerHTML = ''; }
+
+        // --- Initial Load ---
+        loadConfiguredDevices();
+    </script>
+</body>
+</html>
