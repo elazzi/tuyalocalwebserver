@@ -18,6 +18,7 @@ script_dir = os.path.dirname(__file__)
 
 # File paths
 DEVICES_FILE = os.path.join(script_dir, "devices.json")
+DEVICESw_FILE = os.path.join(script_dir, "devicesw.json")
 ZIGBEE_DEVICES_FILE = os.path.join(script_dir, "zigbee_devices.json")
 TUYA_RAW_FILE = os.path.join(script_dir, "devices.json")
 
@@ -42,7 +43,7 @@ def load_configured_devices():
     """Load devices from file, ensuring it's a dictionary."""
     global devices
     try:
-        with open(DEVICES_FILE, "r") as f:
+        with open(DEVICESw_FILE, "r") as f:
             loaded_data = json.load(f)
             if isinstance(loaded_data, dict):
                 devices = loaded_data
@@ -171,7 +172,7 @@ async def add_device(device: DiscoveredDevice):
         "mapping": found_device_data.get('mapping', {}),
         "default_features": []
     }
-    with open(DEVICES_FILE, "w") as f:
+    with open(DEVICESw_FILE, "w") as f:
         json.dump(devices, f, indent=4)
     return {"status": "success", "device_id": device.device_id}
 
@@ -208,7 +209,7 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
     }
 
     # Save back to the devices file
-    with open(DEVICES_FILE, "w") as f:
+    with open(DEVICESw_FILE, "w") as f:
         json.dump(devices, f, indent=4)
 
     return {"status": "success", "device_id": device_data.device_id}
@@ -220,7 +221,7 @@ async def set_default_features(device_id: str, features: DefaultFeatures):
 
     devices[device_id]['default_features'] = features.features
 
-    with open(DEVICES_FILE, "w") as f:
+    with open(DEVICESw_FILE, "w") as f:
         json.dump(devices, f, indent=4)
 
     return {"status": "success", "device_id": device_id, "default_features": features.features}
