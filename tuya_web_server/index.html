@@ -110,6 +110,8 @@
         let discoveredDevices = {}; // Store discovered devices globally
         let configuredDevices = {}; // Store configured devices globally
 
+        const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
         // --- Core API Functions ---
         discoverBtn.addEventListener('click', async () => {
             discoverLoader.style.display = 'inline-block';
@@ -156,6 +158,11 @@
             clearMessages();
             try {
                 const response = await fetch(`/api/devices/${deviceId}/status`);
+                if (response.status === 429) {
+                    statusDiv.innerHTML = `<span style="color: orange;">Server is busy scanning, status refresh queued.</span>`;
+                    // Optional: could add retry logic here, but for now, a message is fine.
+                    return;
+                }
                 if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to get status'); }
                 const data = await response.json();
                 renderDeviceStatus(deviceId, data, isDefaultOnly);
@@ -439,11 +446,21 @@
                     </div>`;
             }
             configuredDevicesDiv.innerHTML = html;
+            initialDeviceStatusLoad(devices);
+        }
+
+        async function initialDeviceStatusLoad(devices) {
+            const devicesToUpdate = [];
             for (const deviceId in devices) {
                 const device = devices[deviceId];
                 if (device.default_features && device.default_features.length > 0) {
-                    getStatus(deviceId, true);
+                    devicesToUpdate.push(deviceId);
                 }
+            }
+
+            for (const deviceId of devicesToUpdate) {
+                await getStatus(deviceId, true);
+                await sleep(2000);
             }
         }
 
