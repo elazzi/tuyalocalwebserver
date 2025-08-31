@@ -18,7 +18,6 @@ script_dir = os.path.dirname(__file__)
 
 # File paths
 DEVICES_FILE = os.path.join(script_dir, "devices.json")
-DEVICESw_FILE = os.path.join(script_dir, "devicesw.json")
 ZIGBEE_DEVICES_FILE = os.path.join(script_dir, "zigbee_devices.json")
 TUYA_RAW_FILE = os.path.join(script_dir, "devices.json")
 
@@ -43,7 +42,7 @@ def load_configured_devices():
     """Load devices from file, ensuring it's a dictionary."""
     global devices
     try:
-        with open(DEVICESw_FILE, "r") as f:
+        with open(DEVICES_FILE, "r") as f:
             loaded_data = json.load(f)
             if isinstance(loaded_data, dict):
                 devices = loaded_data
@@ -68,6 +67,9 @@ class ControlAction(BaseModel):
     command: str
     dp_index: Optional[int] = None
     value: Optional[Any] = None
+
+class DefaultFeatures(BaseModel):
+    features: list[str]
 
 @app.get("/")
 async def read_index():
@@ -166,7 +168,8 @@ async def add_device(device: DiscoveredDevice):
         "name": found_device_data.get('name'),
         "version": found_device_data.get('version', '3.3'),
         "product_name": found_device_data.get('product_name'),
-        "mapping": found_device_data.get('mapping', {})
+        "mapping": found_device_data.get('mapping', {}),
+        "default_features": []
     }
     with open(DEVICES_FILE, "w") as f:
         json.dump(devices, f, indent=4)
@@ -200,7 +203,8 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
         "version": found_device_data.get('version', '3.3'),
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {}),
-        "gateway_id": device_data.gateway_id # Link to the gateway
+        "gateway_id": device_data.gateway_id, # Link to the gateway
+        "default_features": []
     }
 
     # Save back to the devices file
@@ -208,6 +212,18 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
         json.dump(devices, f, indent=4)
 
     return {"status": "success", "device_id": device_data.device_id}
+
+@app.post("/api/devices/{device_id}/set_default_features")
+async def set_default_features(device_id: str, features: DefaultFeatures):
+    if device_id not in devices:
+        raise HTTPException(status_code=404, detail="Device not configured.")
+
+    devices[device_id]['default_features'] = features.features
+
+    with open(DEVICES_FILE, "w") as f:
+        json.dump(devices, f, indent=4)
+
+    return {"status": "success", "device_id": device_id, "default_features": features.features}
 
 @app.get("/api/devices")
 async def get_devices():

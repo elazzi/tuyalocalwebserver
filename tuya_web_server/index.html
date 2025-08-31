@@ -87,6 +87,7 @@
         const configuredDevicesDiv = document.getElementById('configured-devices');
         const messagesDiv = document.getElementById('messages');
         let discoveredDevices = {}; // Store discovered devices globally
+        let configuredDevices = {}; // Store configured devices globally
 
         // --- Core API Functions ---
         discoverBtn.addEventListener('click', async () => {
@@ -122,11 +123,12 @@
             try {
                 const response = await fetch('/api/devices');
                 const devices = await response.json();
+                configuredDevices = devices;
                 renderConfiguredDevices(devices);
             } catch (error) { showMessage(`Error loading configured devices: ${error.message}`, 'error'); }
         }
 
-        async function getStatus(deviceId) {
+        async function getStatus(deviceId, isDefaultOnly = false) {
             const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
             statusDiv.innerHTML = 'Loading status...';
             clearMessages();
@@ -134,7 +136,7 @@
                 const response = await fetch(`/api/devices/${deviceId}/status`);
                 if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to get status'); }
                 const data = await response.json();
-                renderDeviceStatus(deviceId, data);
+                renderDeviceStatus(deviceId, data, isDefaultOnly);
             } catch (error) {
                 statusDiv.innerHTML = `<span style="color: red;">Could not load status.</span>`;
                 showMessage(`Error getting status for ${deviceId}: ${error.message}`, 'error');
@@ -160,6 +162,32 @@
                 getStatus(deviceId); // On failure, refresh to get actual current state
             } finally {
                 statusDiv.style.opacity = '1';
+            }
+        }
+
+        async function saveDefaultFeatures(deviceId) {
+            const checkboxes = document.querySelectorAll(`#device-${deviceId} .device-status input[type="checkbox"][data-feature-code]`);
+            const features = [];
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    features.push(cb.dataset.featureCode);
+                }
+            });
+
+            try {
+                const response = await fetch(`/api/devices/${deviceId}/set_default_features`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ features: features })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to save default features'); }
+                // Update the global configuredDevices object
+                if(configuredDevices[deviceId]) {
+                    configuredDevices[deviceId].default_features = features;
+                }
+                showMessage('Default features saved successfully!', 'success');
+            } catch (error) {
+                showMessage(`Error saving default features: ${error.message}`, 'error');
             }
         }
 
@@ -278,22 +306,31 @@
                     <div class="device" id="device-${deviceId}">
                         <div class="device-header">
                             <h3>${device.name || device.device_id}</h3>
-                            <button class="secondary" onclick="getStatus('${deviceId}')">Refresh Status</button>
+                            <button class="secondary" onclick="getStatus('${deviceId}', false)">Refresh Status</button>
                         </div>
-                        <div class="device-status">Click "Refresh Status" to see device controls.</div>
+                        <div class="device-status"></div>
                     </div>`;
             }
             configuredDevicesDiv.innerHTML = html;
+            for (const deviceId in devices) {
+                getStatus(deviceId, true);
+            }
         }
 
-        function renderDeviceStatus(deviceId, data) {
+        function renderDeviceStatus(deviceId, data, isDefaultOnly = false) {
             const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
             const { status, device_info } = data;
             const mapping = device_info.mapping || {};
             const codeToDpId = Object.fromEntries(Object.entries(mapping).map(([dpId, val]) => [val.code, dpId]));
 
-            let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th></tr></thead><tbody>`;
+            const device = configuredDevices[deviceId];
+            const defaultFeatures = device.default_features || [];
+
+            let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th><th>Default</th></tr></thead><tbody>`;
             for (const codeName in status) {
+                if (isDefaultOnly && !defaultFeatures.includes(codeName)) {
+                    continue; // Skip non-default features if in default-only mode
+                }
                 const item = status[codeName];
                 const dpId = codeToDpId[codeName];
                 const dpInfo = dpId ? mapping[dpId] : null;
@@ -331,7 +368,10 @@
                         } else { controlHtml = 'Read-only'; }
                     } catch (e) { console.error("Error parsing DP values for", codeName, e); controlHtml = 'Error'; }
                 }
-                tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td></tr>`;
+                const isDefault = defaultFeatures.includes(codeName);
+                const checked = isDefault ? 'checked' : '';
+                const defaultCheckbox = `<input type="checkbox" onchange="saveDefaultFeatures('${deviceId}')" data-feature-code="${codeName}" ${checked}>`;
+                tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td><td>${defaultCheckbox}</td></tr>`;
             }
             tableHtml += '</tbody></table>';
             statusDiv.innerHTML = tableHtml;
