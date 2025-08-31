@@ -423,12 +423,35 @@ async def get_device_status(device_id: str):
 
     device_info = devices[device_id]
     control_method = device_info.get("control_method", "local")
+    mapping = device_info.get('mapping', {})
+    mapped_status = {}
 
     try:
-        status = {}
         if control_method == "cloud":
             cloud = get_cloud_api()
-            status = cloud.getstatus(device_id)
+            cloud_response = cloud.getstatus(device_id)
+
+            if not (cloud_response and cloud_response.get('success')):
+                raise Exception(f"Failed to get a valid status from cloud API: {cloud_response.get('msg', 'Unknown Error')}")
+
+            cloud_status_list = cloud_response.get('result', {}).get('status', [])
+
+            # Process cloud status directly
+            for dp in cloud_status_list:
+                code_name = dp['code']
+                dp_info = {}
+                # Find the mapping info by code_name to get type and values
+                for map_id, map_info in mapping.items():
+                    if map_info.get('code') == code_name:
+                        dp_info = map_info
+                        break
+
+                mapped_status[code_name] = {
+                    "value": dp['value'],
+                    "type": dp_info.get("type", "Unknown"),
+                    "values": dp_info.get("values", {}),
+                    "code": code_name
+                }
         else:  # local or gateway
             gateway_id = device_info.get('gateway_id')
             target_device = None
@@ -455,25 +478,23 @@ async def get_device_status(device_id: str):
                 )
                 target_device.set_version(float(device_info.get('version', 3.3)))
 
-            status = target_device.status()
+            local_status = target_device.status()
+            if not (local_status and isinstance(local_status, dict) and 'dps' in local_status):
+                raise Exception("Failed to get a valid status from local device.")
 
-        if not (status and isinstance(status, dict) and 'dps' in status):
-            raise Exception("Failed to get a valid status from device.")
+            status_dps = local_status['dps']
+            dp_to_code = {int(dp): info['code'] for dp, info in mapping.items() if isinstance(info, dict) and 'code' in info}
 
-        mapping = device_info.get('mapping', {})
-        dp_to_code = {int(dp): info['code'] for dp, info in mapping.items() if isinstance(info, dict) and 'code' in info}
-
-        mapped_status = {}
-        for dp, value in status['dps'].items():
-            dp_int = int(dp)
-            code_name = dp_to_code.get(dp_int, str(dp_int))
-            dp_info = mapping.get(str(dp_int), {})
-            mapped_status[code_name] = {
-                "value": value,
-                "type": dp_info.get("type", "Unknown"),
-                "values": dp_info.get("values", {}),
-                "code": code_name
-            }
+            for dp, value in status_dps.items():
+                dp_int = int(dp)
+                code_name = dp_to_code.get(dp_int, str(dp_int))
+                dp_info = mapping.get(str(dp_int), {})
+                mapped_status[code_name] = {
+                    "value": value,
+                    "type": dp_info.get("type", "Unknown"),
+                    "values": dp_info.get("values", {}),
+                    "code": code_name
+                }
 
         return {
             "device_info": {
