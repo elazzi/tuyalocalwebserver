@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 app = FastAPI()
 
@@ -431,10 +431,16 @@ async def get_device_status(device_id: str):
             cloud = get_cloud_api()
             cloud_response = cloud.getstatus(device_id)
 
-            if not (cloud_response and cloud_response.get('success')):
-                raise Exception(f"Failed to get a valid status from cloud API: {cloud_response.get('msg', 'Unknown Error')}")
 
-            cloud_status_list = cloud_response.get('result', {}).get('status', [])
+            cloud_status_list = []
+        
+            cloud_status_list = cloud_response['result']
+
+            # Handle the case where the keys are missing:
+            if not cloud_status_list:
+                # Do something appropriate, e.g., log an error, raise an exception, or use a default value
+                print("Warning: 'result' or 'status' key not found in cloud_response.")
+                # ... other error handling
 
             # Process cloud status directly
             for dp in cloud_status_list:
