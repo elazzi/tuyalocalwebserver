@@ -170,6 +170,7 @@ async def add_device(device: DiscoveredDevice):
         "version": found_device_data.get('version', '3.3'),
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {}),
+        "icon": found_device_data.get('icon'),
         "default_features": []
     }
     with open(DEVICESw_FILE, "w") as f:
@@ -204,6 +205,7 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
         "version": found_device_data.get('version', '3.3'),
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {}),
+        "icon": found_device_data.get('icon'),
         "gateway_id": device_data.gateway_id, # Link to the gateway
         "default_features": []
     }
