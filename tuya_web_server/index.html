@@ -53,6 +53,27 @@
         <h1>Tuya Local Control</h1>
         <div id="messages"></div>
 
+        <div id="cloud-config-section" style="background: white; border: 1px solid #e0e0e0; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h2>Cloud Configuration</h2>
+            <p>Import your devices directly from the Tuya Cloud. First, save your API credentials.</p>
+            <div style="margin-bottom: 10px;">
+                <label for="api-key" style="display: block; margin-bottom: 5px;">API Key:</label>
+                <input type="text" id="api-key" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Key">
+            </div>
+            <div style="margin-bottom: 10px;">
+                <label for="api-secret" style="display: block; margin-bottom: 5px;">API Secret:</label>
+                <input type="password" id="api-secret" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Secret">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="api-region" style="display: block; margin-bottom: 5px;">API Region:</label>
+                <input type="text" id="api-region" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., us, eu, cn">
+            </div>
+            <button onclick="saveCloudConfig()">Save Credentials</button>
+            <button onclick="importFromCloud()" style="margin-left: 10px;">Import Devices from Cloud</button>
+            <span id="cloud-config-status" style="margin-left: 15px;"></span>
+        </div>
+        <hr style="margin: 30px 0;">
+
         <h2>1. Discover Devices</h2>
         <button id="discover-btn">Discover Devices</button>
         <span id="discover-loader">Scanning...</span>
@@ -206,6 +227,70 @@
                 discoverBtn.click(); // Trigger a new discovery scan
             } catch (error) {
                 showMessage(`Error removing device: ${error.message}`, 'error');
+            }
+        }
+
+        async function saveCloudConfig() {
+            const apiKey = document.getElementById('api-key').value.trim();
+            const apiSecret = document.getElementById('api-secret').value.trim();
+            const apiRegion = document.getElementById('api-region').value.trim();
+
+            if (!apiKey || !apiSecret || !apiRegion) {
+                showMessage('Please fill in all cloud credential fields.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/cloud/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, api_region: apiRegion })
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to save cloud config');
+                }
+                showMessage('Cloud credentials saved successfully!', 'success');
+                loadCloudConfigStatus();
+            } catch (error) {
+                showMessage(`Error saving credentials: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadCloudConfigStatus() {
+            const statusSpan = document.getElementById('cloud-config-status');
+            try {
+                const response = await fetch('/api/cloud/config');
+                const data = await response.json();
+                if (data.configured) {
+                    statusSpan.innerHTML = `Credentials saved for region: <strong>${data.region}</strong>.`;
+                    statusSpan.style.color = 'green';
+                    if(document.getElementById('api-region')) {
+                        document.getElementById('api-region').value = data.region;
+                    }
+                } else {
+                    statusSpan.innerHTML = 'Credentials not configured.';
+                    statusSpan.style.color = 'red';
+                }
+            } catch (error) {
+                statusSpan.innerHTML = 'Could not retrieve cloud config status.';
+                statusSpan.style.color = 'red';
+            }
+        }
+
+        async function importFromCloud() {
+            showMessage('Importing devices from cloud...', 'info');
+            try {
+                const response = await fetch('/api/cloud/import', { method: 'POST' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Failed to import from cloud');
+                }
+                const result = await response.json();
+                showMessage(`Successfully imported ${result.device_count} devices! Triggering local discovery...`, 'success');
+                discoverBtn.click();
+            } catch (error) {
+                showMessage(`Error importing from cloud: ${error.message}`, 'error');
             }
         }
 
@@ -413,6 +498,7 @@
 
         // --- Initial Load ---
         loadConfiguredDevices();
+        loadCloudConfigStatus();
     </script>
 </body>
 </html>

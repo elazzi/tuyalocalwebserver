@@ -21,6 +21,7 @@ DEVICES_FILE = os.path.join(script_dir, "devices.json")
 DEVICESw_FILE = os.path.join(script_dir, "devicesw.json")
 ZIGBEE_DEVICES_FILE = os.path.join(script_dir, "zigbee_devices.json")
 TUYA_RAW_FILE = os.path.join(script_dir, "devices.json")
+CLOUD_CONFIG_FILE = os.path.join(script_dir, "cloud_config.json")
 
 # In-memory storage for configured devices
 devices = {}
@@ -71,6 +72,11 @@ class ControlAction(BaseModel):
 
 class DefaultFeatures(BaseModel):
     features: list[str]
+
+class CloudConfig(BaseModel):
+    api_key: str
+    api_secret: str
+    api_region: str
 
 @app.get("/")
 async def read_index():
@@ -227,6 +233,60 @@ async def set_default_features(device_id: str, features: DefaultFeatures):
         json.dump(devices, f, indent=4)
 
     return {"status": "success", "device_id": device_id, "default_features": features.features}
+
+@app.post("/api/cloud/config")
+async def save_cloud_config(config: CloudConfig):
+    """Save Tuya Cloud API credentials."""
+    with open(CLOUD_CONFIG_FILE, "w") as f:
+        json.dump(config.model_dump(), f, indent=4)
+    return {"status": "success"}
+
+@app.get("/api/cloud/config")
+async def get_cloud_config_status():
+    """Get the status of Tuya Cloud API credentials."""
+    if not os.path.exists(CLOUD_CONFIG_FILE):
+        return {"configured": False}
+    try:
+        with open(CLOUD_CONFIG_FILE, "r") as f:
+            config_data = json.load(f)
+        return {
+            "configured": bool(config_data.get("api_key") and config_data.get("api_secret")),
+            "region": config_data.get("api_region")
+        }
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {"configured": False}
+
+@app.post("/api/cloud/import")
+async def import_from_cloud():
+    """Import devices from Tuya Cloud and overwrite devices.json."""
+    if not os.path.exists(CLOUD_CONFIG_FILE):
+        raise HTTPException(status_code=400, detail="Cloud credentials not configured.")
+
+    try:
+        with open(CLOUD_CONFIG_FILE, "r") as f:
+            config = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        raise HTTPException(status_code=500, detail="Could not read cloud configuration.")
+
+    if not all(k in config for k in ["api_key", "api_secret", "api_region"]):
+        raise HTTPException(status_code=400, detail="Cloud credentials incomplete.")
+
+    try:
+        cloud = tinytuya.Cloud(
+            apiRegion=config["api_region"],
+            apiKey=config["api_key"],
+            apiSecret=config["api_secret"]
+        )
+        # getdevices() returns a list of devices, which is what the app expects
+        devices_from_cloud = cloud.getdevices()
+
+        with open(TUYA_RAW_FILE, "w") as f:
+            json.dump(devices_from_cloud, f, indent=4)
+
+        return {"status": "success", "device_count": len(devices_from_cloud)}
+    except Exception as e:
+        logger.exception("Error importing from Tuya Cloud")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during cloud import: {str(e)}")
 
 @app.get("/api/devices")
 async def get_devices():
