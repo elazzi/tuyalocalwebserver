@@ -26,6 +26,7 @@ CLOUD_CONFIG_FILE = os.path.join(script_dir, "cloud_config.json")
 # In-memory storage for configured devices
 devices = {}
 zigbee_devices = {}
+IS_SCANNING = False
 
 def get_cloud_api():
     """Get an instance of the Tuya Cloud API."""
@@ -105,6 +106,11 @@ async def read_index():
 @app.post("/api/discover")
 async def discover_devices():
     """Discover Tuya devices on the local network and list all potential devices."""
+    global IS_SCANNING
+    if IS_SCANNING:
+        raise HTTPException(status_code=429, detail="A discovery scan is already in progress.")
+
+    IS_SCANNING = True
     try:
         # Scan the network for active Tuya devices
         scanned_devices = tinytuya.deviceScan(False, 2)
@@ -166,6 +172,8 @@ async def discover_devices():
     except Exception as e:
         logger.exception("Error during device discovery")
         raise HTTPException(status_code=500, detail=f"Discovery failed: {str(e)}")
+    finally:
+        IS_SCANNING = False
 
 @app.post("/api/add_device")
 async def add_device(device: DiscoveredDevice):
@@ -418,6 +426,8 @@ async def control_device(device_id: str, action: ControlAction):
 @app.get("/api/devices/{device_id}/status")
 async def get_device_status(device_id: str):
     """Get the status of a specific device, handling both local and cloud control."""
+    if IS_SCANNING:
+        raise HTTPException(status_code=429, detail="Scan in progress, status refresh temporarily unavailable.")
     if device_id not in devices:
         raise HTTPException(status_code=404, detail="Device not configured.")
 
