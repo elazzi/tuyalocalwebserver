@@ -262,15 +262,16 @@
                 tableHtml += '<h4 style="margin-top: 20px;">Sub-Devices</h4>';
                 if (sub_devices.error) {
                     tableHtml += `<p style="color: red;">Could not load sub-devices: ${sub_devices.error}</p>`;
-                } else if (Object.keys(sub_devices).length === 0) {
+                } else if (!sub_devices.online?.length && !sub_devices.offline?.length) {
                     tableHtml += '<p>No sub-devices found.</p>';
                 } else {
-                    tableHtml += '<table class="status-table"><thead><tr><th>ID</th><th>Online</th><th>Category</th></tr></thead><tbody>';
-                    // NOTE: The structure of sub_devices is assumed. This may need adjustment based on the actual output of subdev_query().
-                    for (const subId in sub_devices) {
-                        const sub = sub_devices[subId];
-                        tableHtml += `<tr><td>${sub.id || subId}</td><td>${sub.online ? 'Yes' : 'No'}</td><td>${sub.category || 'Unknown'}</td></tr>`;
-                    }
+                    tableHtml += '<table class="status-table"><thead><tr><th>ID</th><th>Online</th></tr></thead><tbody>';
+                    (sub_devices.online || []).forEach(id => {
+                        tableHtml += `<tr><td>${id}</td><td>Yes</td></tr>`;
+                    });
+                    (sub_devices.offline || []).forEach(id => {
+                        tableHtml += `<tr><td>${id}</td><td>No</td></tr>`;
+                    });
                     tableHtml += '</tbody></table>';
                 }
             }
