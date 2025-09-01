@@ -256,6 +256,21 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
 
     return {"status": "success", "device_id": device_data.device_id}
 
+class GatewayStatus(BaseModel):
+    is_gateway: bool
+
+@app.post("/api/devices/{device_id}/set_gateway")
+async def set_gateway_status(device_id: str, status: GatewayStatus):
+    if device_id not in devices:
+        raise HTTPException(status_code=404, detail="Device not configured.")
+
+    devices[device_id]['is_gateway'] = status.is_gateway
+
+    with open(DEVICESw_FILE, "w") as f:
+        json.dump(devices, f, indent=4)
+
+    return {"status": "success", "device_id": device_id, "is_gateway": status.is_gateway}
+
 @app.post("/api/devices/{device_id}/set_default_features")
 async def set_default_features(device_id: str, features: DefaultFeatures):
     if device_id not in devices:
@@ -392,6 +407,7 @@ async def control_device(device_id: str, action: ControlAction):
                     persist=True,
                     version=float(gateway_info.get('version', 3.3))
                 )
+                gateway_device.set_socketRetryLimit(1)
                 target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
             else:
                 # This is a direct-connected (IP) device
@@ -404,6 +420,7 @@ async def control_device(device_id: str, action: ControlAction):
                 )
                 target_device.set_version(float(device_info.get('version', 3.3)))
                 target_device.set_socketPersistent(False)
+                target_device.set_socketRetryLimit(1)
 
             logger.debug(f"Executing local command '{action.command}' on device {device_id} with payload: {action.model_dump()}")
 
@@ -439,91 +456,67 @@ async def get_device_status(device_id: str):
     control_method = device_info.get("control_method", "local")
     mapping = device_info.get('mapping', {})
     mapped_status = {}
+    sub_devices = None
+    status_error = None
 
     try:
         if control_method == "cloud":
             cloud = get_cloud_api()
             cloud_response = cloud.getstatus(device_id)
-
-
-            cloud_status_list = []
-        
-            cloud_status_list = cloud_response['result']
-
-            # Handle the case where the keys are missing:
-            if not cloud_status_list:
-                # Do something appropriate, e.g., log an error, raise an exception, or use a default value
-                print("Warning: 'result' or 'status' key not found in cloud_response.")
-                # ... other error handling
-
-            # Process cloud status directly
+            cloud_status_list = cloud_response.get('result', [])
             for dp in cloud_status_list:
                 code_name = dp['code']
-                dp_info = {}
-                # Find the mapping info by code_name to get type and values
-                for map_id, map_info in mapping.items():
-                    if map_info.get('code') == code_name:
-                        dp_info = map_info
-                        break
-
-                mapped_status[code_name] = {
-                    "value": dp['value'],
-                    "type": dp_info.get("type", "Unknown"),
-                    "values": dp_info.get("values", {}),
-                    "code": code_name
-                }
+                dp_info = next((info for _, info in mapping.items() if info.get('code') == code_name), {})
+                mapped_status[code_name] = {"value": dp['value'], "type": dp_info.get("type", "Unknown"), "values": dp_info.get("values", {}), "code": code_name}
         else:  # local or gateway
             gateway_id = device_info.get('gateway_id')
             target_device = None
             if gateway_id:
-                if gateway_id not in devices:
-                    raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
-
-                gateway_info = devices[gateway_id]
-                gateway_device = tinytuya.Device(
-                    dev_id=gateway_info['device_id'],
-                    address=gateway_info['ip'],
-                    local_key=gateway_info['local_key'],
-                    persist=True,
-                    version=float(gateway_info.get('version', 3.3))
-                )
+                gateway_info = devices.get(gateway_id)
+                if not gateway_info: raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
+                gateway_device = tinytuya.Device(dev_id=gateway_info['device_id'], address=gateway_info['ip'], local_key=gateway_info['local_key'], persist=True, version=float(gateway_info.get('version', 3.3)))
+                gateway_device.set_socketRetryLimit(1)
                 target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
             else:
-                if not device_info.get('ip') or not device_info.get('local_key'):
-                    raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
-                target_device = tinytuya.OutletDevice(
-                    dev_id=device_info['device_id'],
-                    address=device_info['ip'],
-                    local_key=device_info['local_key']
-                )
+                if not device_info.get('ip') or not device_info.get('local_key'): raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
+                target_device = tinytuya.OutletDevice(dev_id=device_info['device_id'], address=device_info['ip'], local_key=device_info['local_key'])
                 target_device.set_version(float(device_info.get('version', 3.3)))
+                target_device.set_socketRetryLimit(1)
 
             local_status = target_device.status()
-            if not (local_status and isinstance(local_status, dict) and 'dps' in local_status):
-                raise Exception("Failed to get a valid status from local device.")
-
+            if not (local_status and isinstance(local_status, dict) and 'dps' in local_status): raise Exception("Failed to get a valid status from local device.")
             status_dps = local_status['dps']
             dp_to_code = {int(dp): info['code'] for dp, info in mapping.items() if isinstance(info, dict) and 'code' in info}
-
             for dp, value in status_dps.items():
                 dp_int = int(dp)
                 code_name = dp_to_code.get(dp_int, str(dp_int))
                 dp_info = mapping.get(str(dp_int), {})
-                mapped_status[code_name] = {
-                    "value": value,
-                    "type": dp_info.get("type", "Unknown"),
-                    "values": dp_info.get("values", {}),
-                    "code": code_name
-                }
-
-        return {
-            "device_info": {
-                "id": device_id,
-                "name": device_info.get('name', 'Unknown'),
-                "mapping": mapping
-            },
-            "status": mapped_status
-        }
+                mapped_status[code_name] = {"value": value, "type": dp_info.get("type", "Unknown"), "values": dp_info.get("values", {}), "code": code_name}
     except Exception as e:
-        logger.exception(f"Error getting status for device {device_id}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        status_error = str(e)
+        logger.warning(f"Could not get status for {device_id}: {e}")
+
+    # If the device is a gateway, query for sub-devices
+    if device_info.get('is_gateway'):
+        try:
+            gateway_device = tinytuya.Device(dev_id=device_info['device_id'], address=device_info['ip'], local_key=device_info['local_key'], version=float(device_info.get('version', 3.3)))
+            gateway_device.set_socketRetryLimit(1)
+            sub_devices_result = gateway_device.subdev_query()
+            # Assuming subdev_query returns a dictionary or similar structure
+            sub_devices = sub_devices_result if sub_devices_result else {}
+        except Exception as e:
+            logger.warning(f"Could not get sub-devices for gateway {device_id}: {e}")
+            sub_devices = {"error": f"Failed to get sub-devices: {e}"}
+
+    # If both attempts failed, raise an error
+    if status_error and (not sub_devices or "error" in sub_devices):
+        raise HTTPException(status_code=500, detail=f"Failed to get status or sub-device list for {device_id}: {status_error}")
+
+    response = {
+        "device_info": {"id": device_id, "name": device_info.get('name', 'Unknown'), "mapping": mapping, "is_gateway": device_info.get('is_gateway', False)},
+        "status": mapped_status if not status_error else {"error": status_error}
+    }
+    if sub_devices is not None:
+        response["sub_devices"] = sub_devices
+
+    return response

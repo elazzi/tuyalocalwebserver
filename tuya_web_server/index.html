@@ -150,6 +150,24 @@
             }
         }
 
+        async function setGatewayStatus(deviceId, isGateway) {
+            try {
+                const response = await fetch(`/api/devices/${deviceId}/set_gateway`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_gateway: isGateway })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to set gateway status'); }
+                showMessage('Gateway status updated successfully!', 'success');
+                if (configuredDevices[deviceId]) {
+                    configuredDevices[deviceId].is_gateway = isGateway;
+                }
+            } catch (error) {
+                showMessage(`Error updating gateway status: ${error.message}`, 'error');
+                loadConfiguredDevices(); // Revert checkbox on failure
+            }
+        }
+
         // --- Rendering Functions ---
         function renderConfiguredDevices(devices) {
             let html = Object.keys(devices).length > 0 ? '' : "<p>No devices have been configured yet. <a href='/config'>Go to configuration</a> to add devices.</p>";
@@ -169,6 +187,9 @@
                                 </div>
                             </div>
                             <div>
+                                <label style="margin-right: 15px; user-select: none;">
+                                    <input type="checkbox" onchange="setGatewayStatus('${deviceId}', this.checked)" ${device.is_gateway ? 'checked' : ''}> Is Gateway
+                                </label>
                                 <button class="secondary" onclick="getStatus('${deviceId}', false)">Refresh Status</button>
                                 <button class="secondary" onclick="removeDevice('${deviceId}')" style="background-color: #dc3545; margin-left: 5px;">Remove</button>
                             </div>
@@ -190,61 +211,69 @@
 
         function renderDeviceStatus(deviceId, data, isDefaultOnly = false) {
             const statusDiv = document.querySelector(`#device-${deviceId} .device-status`);
-            const { status, device_info } = data;
+            const { status, device_info, sub_devices } = data;
             const mapping = device_info.mapping || {};
             const codeToDpId = Object.fromEntries(Object.entries(mapping).map(([dpId, val]) => [val.code, dpId]));
             const defaultFeatures = configuredDevices[deviceId]?.default_features || [];
 
-            let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th><th>Default</th></tr></thead><tbody>`;
-            const featuresToRender = isDefaultOnly ? defaultFeatures : Object.keys(status);
+            let tableHtml = '';
+            if (status.error) {
+                tableHtml += `<p style="color: red;">Could not load device status: ${status.error}</p>`;
+            } else {
+                tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th><th>Default</th></tr></thead><tbody>`;
+                const featuresToRender = isDefaultOnly ? defaultFeatures : Object.keys(status);
 
-            for (const codeName of featuresToRender) {
-                if (!status[codeName]) continue; // Skip if status for this feature isn't available
+                for (const codeName of featuresToRender) {
+                    if (!status[codeName]) continue;
+                    const item = status[codeName];
+                    const dpId = codeToDpId[codeName];
+                    const dpInfo = dpId ? mapping[dpId] : null;
+                    let controlHtml = 'N/A';
+                    let displayValue = item.value;
+                    let unit = '';
 
-                const item = status[codeName];
-                const dpId = codeToDpId[codeName];
-                const dpInfo = dpId ? mapping[dpId] : null;
-
-                let controlHtml = 'N/A';
-                let displayValue = item.value;
-                let unit = '';
-
-                if (dpInfo && dpInfo.code) {
-                    try {
-                        const values = (typeof dpInfo.values === 'string' && dpInfo.values.trim() !== '') ? JSON.parse(dpInfo.values) : {};
-                        if (dpInfo.type === 'Boolean') {
-                            const command = item.value ? 'turn_off' : 'turn_on';
-                            const isChecked = item.value ? 'checked' : '';
-                            controlHtml = `<label class="switch"><input type="checkbox" ${isChecked} onchange="controlDevice('${deviceId}', '${command}', ${dpId})"><span class="slider round"></span></label>`;
-                            displayValue = item.value ? 'On' : 'Off';
-                        } else if (dpInfo.type === 'Enum' && values.range) {
-                            const onchangeAction = `controlDevice('${deviceId}', 'set_value', ${dpId}, this.value)`;
-                            const options = values.range.map(val => `<option value="${val}" ${val === item.value ? 'selected' : ''}>${val}</option>`).join('');
-                            controlHtml = `<select onchange="${onchangeAction}">${options}</select>`;
-                        } else if (dpInfo.type === 'Integer' && values.min !== undefined) {
-                            const scale = values.scale || 0;
-                            const scaledValue = (item.value / Math.pow(10, scale)).toFixed(scale);
-                             const onchangeAction = `controlDevice('${deviceId}', 'set_value', ${dpId}, parseInt(this.value))`;
-                            controlHtml = `
-                                <div class="slider-container">
-                                    <input type="range" min="${values.min}" max="${values.max}" step="${values.step || 1}" value="${item.value}"
-                                           onchange="${onchangeAction}"
-                                           oninput="this.nextElementSibling.innerText = (this.value / ${Math.pow(10, scale)}).toFixed(${scale})">
-                                    <span>${scaledValue}</span>
-                                </div>`;
-                            displayValue = '';
-                        } else { controlHtml = 'Read-only'; }
-
-                        if (values.unit) unit = ` ${values.unit}`;
-                        if (dpInfo.type === 'Integer' && values.scale > 0) displayValue = (item.value / Math.pow(10, values.scale)).toFixed(values.scale);
-
-                    } catch (e) { console.error("Error parsing DP values for", codeName, e); controlHtml = 'Error'; }
+                    if (dpInfo && dpInfo.code) {
+                        try {
+                            const values = (typeof dpInfo.values === 'string' && dpInfo.values.trim() !== '') ? JSON.parse(dpInfo.values) : {};
+                            if (dpInfo.type === 'Boolean') {
+                                const command = item.value ? 'turn_off' : 'turn_on';
+                                controlHtml = `<label class="switch"><input type="checkbox" ${item.value ? 'checked' : ''} onchange="controlDevice('${deviceId}', '${command}', ${dpId})"><span class="slider round"></span></label>`;
+                                displayValue = item.value ? 'On' : 'Off';
+                            } else if (dpInfo.type === 'Enum' && values.range) {
+                                controlHtml = `<select onchange="controlDevice('${deviceId}', 'set_value', ${dpId}, this.value)">${values.range.map(v => `<option value="${v}" ${v === item.value ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
+                            } else if (dpInfo.type === 'Integer' && values.min !== undefined) {
+                                const scale = values.scale || 0;
+                                const scaledValue = (item.value / Math.pow(10, scale)).toFixed(scale);
+                                controlHtml = `<div class="slider-container"><input type="range" min="${values.min}" max="${values.max}" step="${values.step || 1}" value="${item.value}" onchange="controlDevice('${deviceId}', 'set_value', ${dpId}, parseInt(this.value))" oninput="this.nextElementSibling.innerText = (this.value / ${Math.pow(10, scale)}).toFixed(${scale})"><span>${scaledValue}</span></div>`;
+                                displayValue = '';
+                            } else { controlHtml = 'Read-only'; }
+                            if (values.unit) unit = ` ${values.unit}`;
+                            if (dpInfo.type === 'Integer' && values.scale > 0) displayValue = (item.value / Math.pow(10, values.scale)).toFixed(values.scale);
+                        } catch (e) { console.error("Error parsing DP values for", codeName, e); controlHtml = 'Error'; }
+                    }
+                    const isDefault = defaultFeatures.includes(codeName);
+                    const defaultCheckbox = `<input type="checkbox" onchange="saveDefaultFeatures('${deviceId}')" data-feature-code="${codeName}" ${isDefault ? 'checked' : ''}>`;
+                    tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td><td>${defaultCheckbox}</td></tr>`;
                 }
-                const isDefault = defaultFeatures.includes(codeName);
-                const defaultCheckbox = `<input type="checkbox" onchange="saveDefaultFeatures('${deviceId}')" data-feature-code="${codeName}" ${isDefault ? 'checked' : ''}>`;
-                tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td><td>${defaultCheckbox}</td></tr>`;
+                tableHtml += '</tbody></table>';
             }
-            tableHtml += '</tbody></table>';
+
+            if (sub_devices) {
+                tableHtml += '<h4 style="margin-top: 20px;">Sub-Devices</h4>';
+                if (sub_devices.error) {
+                    tableHtml += `<p style="color: red;">Could not load sub-devices: ${sub_devices.error}</p>`;
+                } else if (Object.keys(sub_devices).length === 0) {
+                    tableHtml += '<p>No sub-devices found.</p>';
+                } else {
+                    tableHtml += '<table class="status-table"><thead><tr><th>ID</th><th>Online</th><th>Category</th></tr></thead><tbody>';
+                    // NOTE: The structure of sub_devices is assumed. This may need adjustment based on the actual output of subdev_query().
+                    for (const subId in sub_devices) {
+                        const sub = sub_devices[subId];
+                        tableHtml += `<tr><td>${sub.id || subId}</td><td>${sub.online ? 'Yes' : 'No'}</td><td>${sub.category || 'Unknown'}</td></tr>`;
+                    }
+                    tableHtml += '</tbody></table>';
+                }
+            }
             statusDiv.innerHTML = tableHtml;
         }
 

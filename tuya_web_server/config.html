@@ -108,7 +108,9 @@
                 if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to add device'); }
                 const data = await response.json();
                 showMessage(`Device ${data.device_id} added successfully! You can now view it on the status page.`, 'success');
-                discoverBtn.click(); // Refresh discovery list
+                // Mark the device as configured and re-render the list without a full scan
+                await loadConfiguredDevices();
+                renderDiscoveredDevices(discoveredDevices);
             } catch (error) { showMessage(`Error adding device: ${error.message}`, 'error'); }
         }
 
@@ -230,7 +232,9 @@
                 const data = await response.json();
                 showMessage(`Device ${data.device_id} added successfully! You can now view it on the status page.`, 'success');
                 closeGatewayModal();
-                discoverBtn.click();
+                // Mark the device as configured and re-render the list without a full scan
+                await loadConfiguredDevices();
+                renderDiscoveredDevices(discoveredDevices);
             } catch (error) { showMessage(`Error adding device: ${error.message}`, 'error'); }
         }
 
