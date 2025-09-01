@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tuya Local Control - Configuration</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; background-color: #f4f7f6; }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        h1, h2 { color: #333; }
+        hr { border: 0; border-top: 1px solid #e0e0e0; }
+
+        button { background-color: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; transition: background-color: 0.3s; }
+        button:hover { background-color: #0056b3; }
+        button.secondary { background-color: #6c757d; }
+        button.secondary:hover { background-color: #5a6268; }
+
+        .discovered-item { background: #fff; margin-bottom: 10px; padding: 15px; border-radius: 5px; border: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+        .configured-badge { background: #28a745; color: white; padding: 5px 10px; border-radius: 3px; font-size: 0.9em; }
+
+        .message { padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        .message.success { background-color: #d4edda; color: #155724; }
+        .message.error { background-color: #f8d7da; color: #721c24; }
+        #discover-loader { display: none; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>Tuya Configuration</h1>
+            <a href="/">Back to Device Status</a>
+        </div>
+        <div id="messages"></div>
+
+        <div id="cloud-config-section" style="background: white; border: 1px solid #e0e0e0; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h2>Cloud Configuration</h2>
+            <p>Import your devices directly from the Tuya Cloud. First, save your API credentials.</p>
+            <div style="margin-bottom: 10px;">
+                <label for="api-key" style="display: block; margin-bottom: 5px;">API Key:</label>
+                <input type="text" id="api-key" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Key">
+            </div>
+            <div style="margin-bottom: 10px;">
+                <label for="api-secret" style="display: block; margin-bottom: 5px;">API Secret:</label>
+                <input type="password" id="api-secret" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Secret">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="api-region" style="display: block; margin-bottom: 5px;">API Region:</label>
+                <input type="text" id="api-region" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., us, eu, cn">
+            </div>
+            <button onclick="saveCloudConfig()">Save Credentials</button>
+            <button onclick="importFromCloud()" style="margin-left: 10px;">Import Devices from Cloud</button>
+            <span id="cloud-config-status" style="margin-left: 15px;"></span>
+        </div>
+        <hr style="margin: 30px 0;">
+
+        <h2>Discover Devices</h2>
+        <button id="discover-btn">Discover Devices</button>
+        <span id="discover-loader">Scanning...</span>
+
+        <div id="add-via-gateway-modal" style="display:none; background: #f9f9f9; border: 1px solid #ddd; padding: 20px; margin-top: 20px; border-radius: 8px;">
+            <h3 id="gateway-modal-title">Add Device via Gateway</h3>
+            <input type="hidden" id="gateway-device-id-hidden">
+            <div style="margin-bottom: 15px;">
+                <label for="gateway-select" style="display: block; margin-bottom: 5px;">Select Gateway:</label>
+                <select id="gateway-select" style="width: 100%; padding: 8px;"></select>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="new-device-name" style="display: block; margin-bottom: 5px;">Device Name:</label>
+                <input type="text" id="new-device-name" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., Living Room Sensor">
+            </div>
+            <button onclick="saveDeviceViaGateway()">Save Device</button>
+            <button class="secondary" onclick="closeGatewayModal()" style="margin-left: 5px;">Cancel</button>
+        </div>
+
+        <div id="discovered-devices"></div>
+    </div>
+
+    <script>
+        const discoverBtn = document.getElementById('discover-btn');
+        const discoverLoader = document.getElementById('discover-loader');
+        const discoveredDevicesDiv = document.getElementById('discovered-devices');
+        const messagesDiv = document.getElementById('messages');
+        let discoveredDevices = {};
+        let configuredDevices = {};
+
+        // --- Core API Functions ---
+        discoverBtn.addEventListener('click', async () => {
+            discoverLoader.style.display = 'inline-block';
+            discoveredDevicesDiv.innerHTML = '';
+            clearMessages();
+            try {
+                const response = await fetch('/api/discover', { method: 'POST' });
+                const data = await response.json();
+                discoveredDevices = data.devices || {};
+                sessionStorage.setItem('discoveredDevices', JSON.stringify(discoveredDevices));
+                await loadConfiguredDevices(); // Reload configured devices to get the latest state
+                renderDiscoveredDevices(discoveredDevices);
+            } catch (error) { showMessage(`Error discovering devices: ${error.message}`, 'error'); }
+            finally { discoverLoader.style.display = 'none'; }
+        });
+
+        async function addDevice(deviceId, ip) {
+            clearMessages();
+            try {
+                const response = await fetch('/api/add_device', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: deviceId, ip: ip })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to add device'); }
+                const data = await response.json();
+                showMessage(`Device ${data.device_id} added successfully! You can now view it on the status page.`, 'success');
+                discoverBtn.click(); // Refresh discovery list
+            } catch (error) { showMessage(`Error adding device: ${error.message}`, 'error'); }
+        }
+
+        async function loadConfiguredDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                configuredDevices = await response.json();
+            } catch (error) { showMessage(`Error loading configured devices: ${error.message}`, 'error'); }
+        }
+
+        async function saveCloudConfig() {
+            const apiKey = document.getElementById('api-key').value.trim();
+            const apiSecret = document.getElementById('api-secret').value.trim();
+            const apiRegion = document.getElementById('api-region').value.trim();
+
+            if (!apiKey || !apiSecret || !apiRegion) {
+                showMessage('Please fill in all cloud credential fields.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/cloud/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, api_region: apiRegion })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to save cloud config'); }
+                showMessage('Cloud credentials saved successfully!', 'success');
+                loadCloudConfigStatus();
+            } catch (error) { showMessage(`Error saving credentials: ${error.message}`, 'error'); }
+        }
+
+        async function loadCloudConfigStatus() {
+            const statusSpan = document.getElementById('cloud-config-status');
+            try {
+                const response = await fetch('/api/cloud/config');
+                const data = await response.json();
+                if (data.configured) {
+                    statusSpan.innerHTML = `Credentials saved for region: <strong>${data.region}</strong>.`;
+                    statusSpan.style.color = 'green';
+                    if(document.getElementById('api-key')) document.getElementById('api-key').placeholder = "Saved";
+                    if(document.getElementById('api-secret')) document.getElementById('api-secret').placeholder = "Saved";
+                    if(document.getElementById('api-region')) document.getElementById('api-region').value = data.region;
+                } else {
+                    statusSpan.innerHTML = 'Credentials not configured.';
+                    statusSpan.style.color = 'red';
+                }
+            } catch (error) {
+                statusSpan.innerHTML = 'Could not retrieve cloud config status.';
+                statusSpan.style.color = 'red';
+            }
+        }
+
+        async function importFromCloud() {
+            showMessage('Importing devices from cloud...', 'info');
+            try {
+                const response = await fetch('/api/cloud/import', { method: 'POST' });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to import from cloud'); }
+                const result = await response.json();
+                showMessage(`Successfully imported ${result.device_count} devices! Triggering local discovery...`, 'success');
+                discoverBtn.click();
+            } catch (error) { showMessage(`Error importing from cloud: ${error.message}`, 'error'); }
+        }
+
+        function loadCachedDiscoveredDevices() {
+            const cachedData = sessionStorage.getItem('discoveredDevices');
+            if (cachedData) {
+                discoveredDevices = JSON.parse(cachedData);
+                renderDiscoveredDevices(discoveredDevices);
+            }
+        }
+
+        // --- Gateway Modal Functions ---
+        function openGatewayModal(deviceId, deviceName) {
+            document.getElementById('gateway-modal-title').textContent = `Add '${deviceName}' via Gateway`;
+            document.getElementById('gateway-device-id-hidden').value = deviceId;
+            document.getElementById('new-device-name').value = deviceName;
+
+            const select = document.getElementById('gateway-select');
+            select.innerHTML = '<option value="">-- Select a Gateway --</option>';
+
+            const gateways = Object.values(configuredDevices).filter(d => d.ip);
+            if (gateways.length === 0) {
+                showMessage('No potential gateways (configured devices with an IP) found. Please configure a gateway first.', 'error');
+                return;
+            }
+
+            gateways.forEach(gateway => {
+                const option = document.createElement('option');
+                option.value = gateway.device_id;
+                option.textContent = `${gateway.name || 'Unknown'} (ID: ${gateway.device_id})`;
+                select.appendChild(option);
+            });
+            document.getElementById('add-via-gateway-modal').style.display = 'block';
+        }
+
+        function closeGatewayModal() {
+            document.getElementById('add-via-gateway-modal').style.display = 'none';
+        }
+
+        async function saveDeviceViaGateway() {
+            const newDeviceId = document.getElementById('gateway-device-id-hidden').value;
+            const gatewayId = document.getElementById('gateway-select').value;
+            const newDeviceName = document.getElementById('new-device-name').value;
+
+            if (!gatewayId || !newDeviceName.trim()) {
+                showMessage('Please select a gateway and provide a device name.', 'error');
+                return;
+            }
+
+            clearMessages();
+            try {
+                const response = await fetch('/api/add_device_via_gateway', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: newDeviceId, name: newDeviceName, gateway_id: gatewayId })
+                });
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to add device'); }
+                const data = await response.json();
+                showMessage(`Device ${data.device_id} added successfully! You can now view it on the status page.`, 'success');
+                closeGatewayModal();
+                discoverBtn.click();
+            } catch (error) { showMessage(`Error adding device: ${error.message}`, 'error'); }
+        }
+
+        // --- Rendering Functions ---
+        function renderDiscoveredDevices(devices) {
+            const discovered = Object.values(devices);
+            let html = discovered.length > 0 ? '<h3>Found Devices:</h3>' : "<p>No new devices found on the network.</p>";
+            if (discovered.length > 0) {
+                 discovered.forEach(device => {
+                    const isConfigured = device.id in configuredDevices;
+                    const ipInfo = device.has_ip ? `<strong>IP:</strong> ${device.ip}` : '<strong>IP:</strong> Not found (potential sub-device)';
+                    let actionButton = '<span class="configured-badge">Configured</span>';
+                    if (!isConfigured) {
+                        if (device.has_ip) {
+                            actionButton = `<button onclick="addDevice('${device.id}', '${device.ip}')">Add (Local)</button>`;
+                        } else {
+                            actionButton = `
+                                <button class="secondary" onclick="addDevice('${device.id}', null)">Add (Cloud)</button>
+                                <button class="secondary" onclick="openGatewayModal('${device.id}', '${device.name || 'Unknown'}')" style="margin-left: 5px;">Add via Gateway</button>
+                            `;
+                        }
+                    }
+
+                    html += `
+                        <div class="discovered-item">
+                            <div class="device-info">
+                                <div><strong>ID:</strong> ${device.id}</div>
+                                <div><strong>Name:</strong> ${device.name || 'Unknown'}</div>
+                                <div>${ipInfo}</div>
+                                <div><strong>Model:</strong> ${device.product_name || 'Unknown'}</div>
+                            </div>
+                            <div class="device-actions">
+                                ${actionButton}
+                            </div>
+                        </div>`;
+                });
+            }
+            discoveredDevicesDiv.innerHTML = html;
+        }
+
+        // --- Utility Functions ---
+        function showMessage(message, type = 'info') { messagesDiv.innerHTML = `<div class="message ${type}">${message}</div>`; }
+        function clearMessages() { messagesDiv.innerHTML = ''; }
+
+        // --- Initial Load ---
+        async function initialLoad() {
+            await loadConfiguredDevices();
+            await loadCloudConfigStatus();
+            loadCachedDiscoveredDevices();
+        }
+
+        initialLoad();
+    </script>
+</body>
+</html>

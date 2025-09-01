@@ -103,6 +103,10 @@ class CloudConfig(BaseModel):
 async def read_index():
     return FileResponse(os.path.join(script_dir, 'index.html'))
 
+@app.get("/config")
+async def read_config():
+    return FileResponse(os.path.join(script_dir, 'config.html'))
+
 @app.post("/api/discover")
 async def discover_devices():
     """Discover Tuya devices on the local network and list all potential devices."""

@@ -50,99 +50,24 @@
 </head>
 <body>
     <div class="container">
-        <h1>Tuya Local Control</h1>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>Tuya Device Status</h1>
+            <a href="/config">Go to Configuration</a>
+        </div>
         <div id="messages"></div>
 
-        <div id="cloud-config-section" style="background: white; border: 1px solid #e0e0e0; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-            <h2>Cloud Configuration</h2>
-            <p>Import your devices directly from the Tuya Cloud. First, save your API credentials.</p>
-            <div style="margin-bottom: 10px;">
-                <label for="api-key" style="display: block; margin-bottom: 5px;">API Key:</label>
-                <input type="text" id="api-key" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Key">
-            </div>
-            <div style="margin-bottom: 10px;">
-                <label for="api-secret" style="display: block; margin-bottom: 5px;">API Secret:</label>
-                <input type="password" id="api-secret" style="width: calc(100% - 16px); padding: 8px;" placeholder="Tuya API Secret">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label for="api-region" style="display: block; margin-bottom: 5px;">API Region:</label>
-                <input type="text" id="api-region" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., us, eu, cn">
-            </div>
-            <button onclick="saveCloudConfig()">Save Credentials</button>
-            <button onclick="importFromCloud()" style="margin-left: 10px;">Import Devices from Cloud</button>
-            <span id="cloud-config-status" style="margin-left: 15px;"></span>
-        </div>
-        <hr style="margin: 30px 0;">
-
-        <h2>1. Discover Devices</h2>
-        <button id="discover-btn">Discover Devices</button>
-        <span id="discover-loader">Scanning...</span>
-
-        <!-- Modal for adding a device via a gateway -->
-        <div id="add-via-gateway-modal" style="display:none; background: #f9f9f9; border: 1px solid #ddd; padding: 20px; margin-top: 20px; border-radius: 8px;">
-            <h3 id="gateway-modal-title">Add Device via Gateway</h3>
-            <input type="hidden" id="gateway-device-id-hidden">
-            <div style="margin-bottom: 15px;">
-                <label for="gateway-select" style="display: block; margin-bottom: 5px;">Select Gateway:</label>
-                <select id="gateway-select" style="width: 100%; padding: 8px;"></select>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label for="new-device-name" style="display: block; margin-bottom: 5px;">Device Name:</label>
-                <input type="text" id="new-device-name" style="width: calc(100% - 16px); padding: 8px;" placeholder="e.g., Living Room Sensor">
-            </div>
-            <button onclick="saveDeviceViaGateway()">Save Device</button>
-            <button class="secondary" onclick="closeGatewayModal()" style="margin-left: 5px;">Cancel</button>
-        </div>
-
-        <div id="discovered-devices"></div>
-        <hr style="margin: 30px 0;">
-
-        <h2>2. Configured Devices</h2>
+        <h2>Configured Devices</h2>
         <div id="configured-devices"></div>
     </div>
 
     <script>
-        const discoverBtn = document.getElementById('discover-btn');
-        const discoverLoader = document.getElementById('discover-loader');
-        const discoveredDevicesDiv = document.getElementById('discovered-devices');
         const configuredDevicesDiv = document.getElementById('configured-devices');
         const messagesDiv = document.getElementById('messages');
-        let discoveredDevices = {}; // Store discovered devices globally
-        let configuredDevices = {}; // Store configured devices globally
+        let configuredDevices = {};
 
         const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
         // --- Core API Functions ---
-        discoverBtn.addEventListener('click', async () => {
-            discoverLoader.style.display = 'inline-block';
-            discoveredDevicesDiv.innerHTML = '';
-            clearMessages();
-            try {
-                const response = await fetch('/api/discover', { method: 'POST' });
-                const data = await response.json();
-                discoveredDevices = data.devices || {}; // Store for modal
-                sessionStorage.setItem('discoveredDevices', JSON.stringify(discoveredDevices));
-                renderDiscoveredDevices(discoveredDevices);
-            } catch (error) { showMessage(`Error discovering devices: ${error.message}`, 'error'); }
-            finally { discoverLoader.style.display = 'none'; }
-        });
-        
-        async function addDevice(deviceId, ip) {
-            clearMessages();
-            try {
-                const response = await fetch('/api/add_device', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ device_id: deviceId, ip: ip })
-                });
-                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to add device'); }
-                const data = await response.json();
-                showMessage(`Device ${data.device_id} added successfully!`, 'success');
-                await loadConfiguredDevices();
-                discoverBtn.click();
-            } catch (error) { showMessage(`Error adding device: ${error.message}`, 'error'); }
-        }
-
         async function loadConfiguredDevices() {
             try {
                 const response = await fetch('/api/devices');
@@ -160,7 +85,6 @@
                 const response = await fetch(`/api/devices/${deviceId}/status`);
                 if (response.status === 429) {
                     statusDiv.innerHTML = `<span style="color: orange;">Server is busy scanning, status refresh queued.</span>`;
-                    // Optional: could add retry logic here, but for now, a message is fine.
                     return;
                 }
                 if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to get status'); }
@@ -185,10 +109,10 @@
                 });
                 if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to control device'); }
                 const data = await response.json();
-                renderDeviceStatus(deviceId, data); // Re-render with fresh state from API
+                renderDeviceStatus(deviceId, data);
             } catch (error) {
                 showMessage(`Error controlling device: ${error.message}`, 'error');
-                getStatus(deviceId); // On failure, refresh to get actual current state
+                getStatus(deviceId);
             } finally {
                 statusDiv.style.opacity = '1';
             }
@@ -196,12 +120,7 @@
 
         async function saveDefaultFeatures(deviceId) {
             const checkboxes = document.querySelectorAll(`#device-${deviceId} .device-status input[type="checkbox"][data-feature-code]`);
-            const features = [];
-            checkboxes.forEach(cb => {
-                if (cb.checked) {
-                    features.push(cb.dataset.featureCode);
-                }
-            });
+            const features = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.dataset.featureCode);
 
             try {
                 const response = await fetch(`/api/devices/${deviceId}/set_default_features`, {
@@ -209,8 +128,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ features: features })
                 });
-                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to save default features'); }
-                // Update the global configuredDevices object
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to save defaults'); }
                 if(configuredDevices[deviceId]) {
                     configuredDevices[deviceId].default_features = features;
                 }
@@ -221,207 +139,20 @@
         }
 
         async function removeDevice(deviceId) {
-            if (!confirm('Are you sure you want to remove this device?')) {
-                return;
-            }
+            if (!confirm('Are you sure you want to remove this device?')) return;
             try {
                 const response = await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Failed to remove device');
-                }
+                if (!response.ok) { const data = await response.json(); throw new Error(data.detail || 'Failed to remove'); }
                 showMessage('Device removed successfully!', 'success');
-                await loadConfiguredDevices(); // Reload the list of configured devices
-                discoverBtn.click(); // Trigger a new discovery scan
+                await loadConfiguredDevices();
             } catch (error) {
                 showMessage(`Error removing device: ${error.message}`, 'error');
             }
         }
 
-        async function saveCloudConfig() {
-            const apiKey = document.getElementById('api-key').value.trim();
-            const apiSecret = document.getElementById('api-secret').value.trim();
-            const apiRegion = document.getElementById('api-region').value.trim();
-
-            if (!apiKey || !apiSecret || !apiRegion) {
-                showMessage('Please fill in all cloud credential fields.', 'error');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/cloud/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, api_region: apiRegion })
-                });
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Failed to save cloud config');
-                }
-                showMessage('Cloud credentials saved successfully!', 'success');
-                loadCloudConfigStatus();
-            } catch (error) {
-                showMessage(`Error saving credentials: ${error.message}`, 'error');
-            }
-        }
-
-        async function loadCloudConfigStatus() {
-            const statusSpan = document.getElementById('cloud-config-status');
-            try {
-                const response = await fetch('/api/cloud/config');
-                const data = await response.json();
-                if (data.configured) {
-                    statusSpan.innerHTML = `Credentials saved for region: <strong>${data.region}</strong>.`;
-                    statusSpan.style.color = 'green';
-                    if(document.getElementById('api-region')) {
-                        document.getElementById('api-region').value = data.region;
-                    }
-                } else {
-                    statusSpan.innerHTML = 'Credentials not configured.';
-                    statusSpan.style.color = 'red';
-                }
-            } catch (error) {
-                statusSpan.innerHTML = 'Could not retrieve cloud config status.';
-                statusSpan.style.color = 'red';
-            }
-        }
-
-        async function importFromCloud() {
-            showMessage('Importing devices from cloud...', 'info');
-            try {
-                const response = await fetch('/api/cloud/import', { method: 'POST' });
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Failed to import from cloud');
-                }
-                const result = await response.json();
-                showMessage(`Successfully imported ${result.device_count} devices! Triggering local discovery...`, 'success');
-                discoverBtn.click();
-            } catch (error) {
-                showMessage(`Error importing from cloud: ${error.message}`, 'error');
-            }
-        }
-
-        function loadCachedDiscoveredDevices() {
-            const cachedData = sessionStorage.getItem('discoveredDevices');
-            if (cachedData) {
-                discoveredDevices = JSON.parse(cachedData);
-                renderDiscoveredDevices(discoveredDevices);
-            }
-        }
-
-        // --- Gateway Modal Functions ---
-        async function openGatewayModal(deviceId, deviceName) {
-            document.getElementById('gateway-modal-title').textContent = `Add '${deviceName}' via Gateway`;
-            document.getElementById('gateway-device-id-hidden').value = deviceId;
-            document.getElementById('new-device-name').value = deviceName; // Pre-fill the name
-
-            const select = document.getElementById('gateway-select');
-            select.innerHTML = '<option value="">-- Select a Gateway --</option>';
-
-            // Fetch configured devices to populate gateway list
-            try {
-                const response = await fetch('/api/devices');
-                const configured = await response.json();
-                const gateways = Object.values(configured).filter(d => d.ip); // Gateways must have an IP
-
-                if (gateways.length === 0) {
-                    showMessage('No potential gateways (configured devices with an IP) found.', 'error');
-                    return;
-                }
-
-                gateways.forEach(gateway => {
-                    const option = document.createElement('option');
-                    option.value = gateway.device_id;
-                    option.textContent = `${gateway.name || 'Unknown'} (ID: ${gateway.device_id})`;
-                    select.appendChild(option);
-                });
-
-                 document.getElementById('add-via-gateway-modal').style.display = 'block';
-            } catch (error) {
-                showMessage(`Error loading gateways: ${error.message}`, 'error');
-            }
-        }
-
-        function closeGatewayModal() {
-            document.getElementById('add-via-gateway-modal').style.display = 'none';
-        }
-
-        async function saveDeviceViaGateway() {
-            const newDeviceId = document.getElementById('gateway-device-id-hidden').value;
-            const gatewayId = document.getElementById('gateway-select').value;
-            const newDeviceName = document.getElementById('new-device-name').value;
-
-            if (!gatewayId) {
-                showMessage('Please select a gateway.', 'error');
-                return;
-            }
-            if (!newDeviceName.trim()) {
-                showMessage('Please enter a name for the new device.', 'error');
-                return;
-            }
-
-            clearMessages();
-            try {
-                const response = await fetch('/api/add_device_via_gateway', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ device_id: newDeviceId, name: newDeviceName, gateway_id: gatewayId })
-                });
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Failed to add device via gateway');
-                }
-                const data = await response.json();
-                showMessage(`Device ${data.device_id} added successfully via gateway!`, 'success');
-                closeGatewayModal();
-                await loadConfiguredDevices();
-                discoverBtn.click();
-            } catch (error) {
-                showMessage(`Error adding device: ${error.message}`, 'error');
-            }
-        }
-
         // --- Rendering Functions ---
-        function renderDiscoveredDevices(devices) {
-            const discovered = Object.values(devices);
-            let html = discovered.length > 0 ? '<h3>Found Devices:</h3>' : "<p>No new devices found on the network.</p>";
-            if (discovered.length > 0) {
-                 discovered.forEach(device => {
-                    const ipInfo = device.has_ip ? `<strong>IP:</strong> ${device.ip}` : '<strong>IP:</strong> Not found (potential sub-device)';
-                    let actionButton = '<span class="configured-badge">Configured</span>';
-                    if (!device.configured) {
-                        if (device.has_ip) {
-                            actionButton = `<button onclick="addDevice('${device.id}', '${device.ip}')">Add (Local)</button>`;
-                        } else {
-                            actionButton = `
-                                <button class="secondary" onclick="addDevice('${device.id}', null)">Add (Cloud)</button>
-                                <button class="secondary" onclick="openGatewayModal('${device.id}', '${device.name || 'Unknown'}')" style="margin-left: 5px;">Add via Gateway</button>
-                            `;
-                        }
-                    } else if (device.is_zigbee) {
-                        actionButton = '<span class="configured-badge" style="background-color: #17a2b8;">Zigbee</span>';
-                    }
-
-                    html += `
-                        <div class="discovered-item">
-                            <div class="device-info">
-                                <div><strong>ID:</strong> ${device.id}</div>
-                                <div><strong>Name:</strong> ${device.name || 'Unknown'}</div>
-                                <div>${ipInfo}</div>
-                                <div><strong>Model:</strong> ${device.product_name || 'Unknown'}</div>
-                            </div>
-                            <div class="device-actions">
-                                ${actionButton}
-                            </div>
-                        </div>`;
-                });
-            }
-            discoveredDevicesDiv.innerHTML = html;
-        }
-
         function renderConfiguredDevices(devices) {
-            let html = Object.keys(devices).length > 0 ? '' : "<p>No devices have been configured yet.</p>";
+            let html = Object.keys(devices).length > 0 ? '' : "<p>No devices have been configured yet. <a href='/config'>Go to configuration</a> to add devices.</p>";
             for (const deviceId in devices) {
                 const device = devices[deviceId];
                 html += `
@@ -450,17 +181,10 @@
         }
 
         async function initialDeviceStatusLoad(devices) {
-            const devicesToUpdate = [];
-            for (const deviceId in devices) {
-                const device = devices[deviceId];
-                if (device.default_features && device.default_features.length > 0) {
-                    devicesToUpdate.push(deviceId);
-                }
-            }
-
+            const devicesToUpdate = Object.keys(devices).filter(id => devices[id].default_features && devices[id].default_features.length > 0);
             for (const deviceId of devicesToUpdate) {
                 await getStatus(deviceId, true);
-                await sleep(2000);
+                await sleep(1000); // Stagger status requests
             }
         }
 
@@ -469,55 +193,55 @@
             const { status, device_info } = data;
             const mapping = device_info.mapping || {};
             const codeToDpId = Object.fromEntries(Object.entries(mapping).map(([dpId, val]) => [val.code, dpId]));
-
-            const device = configuredDevices[deviceId];
-            const defaultFeatures = device.default_features || [];
+            const defaultFeatures = configuredDevices[deviceId]?.default_features || [];
 
             let tableHtml = `<table class="status-table"><thead><tr><th>Feature</th><th>Value</th><th>Action</th><th>Default</th></tr></thead><tbody>`;
-            for (const codeName in status) {
-                if (isDefaultOnly && !defaultFeatures.includes(codeName)) {
-                    continue; // Skip non-default features if in default-only mode
-                }
+            const featuresToRender = isDefaultOnly ? defaultFeatures : Object.keys(status);
+
+            for (const codeName of featuresToRender) {
+                if (!status[codeName]) continue; // Skip if status for this feature isn't available
+
                 const item = status[codeName];
                 const dpId = codeToDpId[codeName];
                 const dpInfo = dpId ? mapping[dpId] : null;
 
                 let controlHtml = 'N/A';
                 let displayValue = item.value;
-                if (typeof displayValue === 'boolean') displayValue = displayValue ? 'On' : 'Off';
                 let unit = '';
 
                 if (dpInfo && dpInfo.code) {
                     try {
                         const values = (typeof dpInfo.values === 'string' && dpInfo.values.trim() !== '') ? JSON.parse(dpInfo.values) : {};
-                        if (dpInfo.type === 'Integer' && values.scale > 0) displayValue = (item.value / Math.pow(10, values.scale)).toFixed(values.scale);
-                        if (values.unit) unit = ` ${values.unit}`;
-
-                        const onchangeAction = `controlDevice('${deviceId}', 'set_value', ${dpId}, this.value)`;
-
                         if (dpInfo.type === 'Boolean') {
                             const command = item.value ? 'turn_off' : 'turn_on';
                             const isChecked = item.value ? 'checked' : '';
                             controlHtml = `<label class="switch"><input type="checkbox" ${isChecked} onchange="controlDevice('${deviceId}', '${command}', ${dpId})"><span class="slider round"></span></label>`;
+                            displayValue = item.value ? 'On' : 'Off';
                         } else if (dpInfo.type === 'Enum' && values.range) {
+                            const onchangeAction = `controlDevice('${deviceId}', 'set_value', ${dpId}, this.value)`;
                             const options = values.range.map(val => `<option value="${val}" ${val === item.value ? 'selected' : ''}>${val}</option>`).join('');
                             controlHtml = `<select onchange="${onchangeAction}">${options}</select>`;
                         } else if (dpInfo.type === 'Integer' && values.min !== undefined) {
-                            const scaledValue = (item.value / Math.pow(10, values.scale || 0)).toFixed(values.scale || 0);
+                            const scale = values.scale || 0;
+                            const scaledValue = (item.value / Math.pow(10, scale)).toFixed(scale);
+                             const onchangeAction = `controlDevice('${deviceId}', 'set_value', ${dpId}, parseInt(this.value))`;
                             controlHtml = `
                                 <div class="slider-container">
                                     <input type="range" min="${values.min}" max="${values.max}" step="${values.step || 1}" value="${item.value}"
-                                           onchange="${onchangeAction.replace('this.value', 'parseInt(this.value)')}"
-                                           oninput="this.nextElementSibling.innerText = (this.value / ${Math.pow(10, values.scale || 0)}).toFixed(${values.scale || 0})">
+                                           onchange="${onchangeAction}"
+                                           oninput="this.nextElementSibling.innerText = (this.value / ${Math.pow(10, scale)}).toFixed(${scale})">
                                     <span>${scaledValue}</span>
                                 </div>`;
                             displayValue = '';
                         } else { controlHtml = 'Read-only'; }
+
+                        if (values.unit) unit = ` ${values.unit}`;
+                        if (dpInfo.type === 'Integer' && values.scale > 0) displayValue = (item.value / Math.pow(10, values.scale)).toFixed(values.scale);
+
                     } catch (e) { console.error("Error parsing DP values for", codeName, e); controlHtml = 'Error'; }
                 }
                 const isDefault = defaultFeatures.includes(codeName);
-                const checked = isDefault ? 'checked' : '';
-                const defaultCheckbox = `<input type="checkbox" onchange="saveDefaultFeatures('${deviceId}')" data-feature-code="${codeName}" ${checked}>`;
+                const defaultCheckbox = `<input type="checkbox" onchange="saveDefaultFeatures('${deviceId}')" data-feature-code="${codeName}" ${isDefault ? 'checked' : ''}>`;
                 tableHtml += `<tr><td>${codeName}</td><td>${displayValue}${unit}</td><td>${controlHtml}</td><td>${defaultCheckbox}</td></tr>`;
             }
             tableHtml += '</tbody></table>';
@@ -530,8 +254,6 @@
 
         // --- Initial Load ---
         loadConfiguredDevices();
-        loadCloudConfigStatus();
-        loadCachedDiscoveredDevices();
     </script>
 </body>
 </html>
