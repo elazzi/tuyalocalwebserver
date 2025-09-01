@@ -392,6 +392,7 @@ async def control_device(device_id: str, action: ControlAction):
                     persist=True,
                     version=float(gateway_info.get('version', 3.3))
                 )
+                gateway_device.set_socketRetryLimit(1)
                 target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
             else:
                 # This is a direct-connected (IP) device
@@ -404,6 +405,7 @@ async def control_device(device_id: str, action: ControlAction):
                 )
                 target_device.set_version(float(device_info.get('version', 3.3)))
                 target_device.set_socketPersistent(False)
+                target_device.set_socketRetryLimit(1)
 
             logger.debug(f"Executing local command '{action.command}' on device {device_id} with payload: {action.model_dump()}")
 
@@ -487,6 +489,7 @@ async def get_device_status(device_id: str):
                     persist=True,
                     version=float(gateway_info.get('version', 3.3))
                 )
+                gateway_device.set_socketRetryLimit(1)
                 target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
             else:
                 if not device_info.get('ip') or not device_info.get('local_key'):
@@ -497,6 +500,7 @@ async def get_device_status(device_id: str):
                     local_key=device_info['local_key']
                 )
                 target_device.set_version(float(device_info.get('version', 3.3)))
+                target_device.set_socketRetryLimit(1)
 
             local_status = target_device.status()
             if not (local_status and isinstance(local_status, dict) and 'dps' in local_status):
