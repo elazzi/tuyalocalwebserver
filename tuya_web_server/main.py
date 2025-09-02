@@ -503,16 +503,17 @@ async def get_device_status(device_id: str):
             gateway_device.set_socketRetryLimit(1)
             sub_devices_result = gateway_device.subdev_query()
 
+            data_field = sub_devices_result.get('data')
+
+            # 'data_field' will now be {'online': [...], 'offline': [...]}
+            print(data_field)
             # Ensure sub_devices is a dictionary
-            if isinstance(sub_devices_result, str):
-                try:
-                    sub_devices = json.loads(sub_devices_result)
-                except json.JSONDecodeError:
-                    sub_devices = {"error": "Invalid JSON from subdev_query"}
-            elif sub_devices_result:
-                sub_devices = sub_devices_result
-            else:
-                sub_devices = {}
+            online_devices = data_field.get('online', [])
+            offline_devices = data_field.get('offline', [])
+
+            print("Online sub-devices:", online_devices)
+            print("Offline sub-devices:", offline_devices)
+            sub_devices =data_field
         except Exception as e:
             logger.warning(f"Could not get sub-devices for gateway {device_id}: {e}")
             sub_devices = {"error": f"Failed to get sub-devices: {e}"}
