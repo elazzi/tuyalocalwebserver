@@ -502,8 +502,17 @@ async def get_device_status(device_id: str):
             gateway_device = tinytuya.Device(dev_id=device_info['device_id'], address=device_info['ip'], local_key=device_info['local_key'], version=float(device_info.get('version', 3.3)))
             gateway_device.set_socketRetryLimit(1)
             sub_devices_result = gateway_device.subdev_query()
-            # Assuming subdev_query returns a dictionary or similar structure
-            sub_devices = sub_devices_result if sub_devices_result else {}
+
+            # Ensure sub_devices is a dictionary
+            if isinstance(sub_devices_result, str):
+                try:
+                    sub_devices = json.loads(sub_devices_result)
+                except json.JSONDecodeError:
+                    sub_devices = {"error": "Invalid JSON from subdev_query"}
+            elif sub_devices_result:
+                sub_devices = sub_devices_result
+            else:
+                sub_devices = {}
         except Exception as e:
             logger.warning(f"Could not get sub-devices for gateway {device_id}: {e}")
             sub_devices = {"error": f"Failed to get sub-devices: {e}"}
