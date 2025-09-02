@@ -8,11 +8,11 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 # --- Device Credentials ---
 # Replace with your actual gateway and sub-device credentials
-GATEWAY_DEVICE_ID = "bfdf798d4baae73d21oarx"  #bfdf798d4baae73d21oarx"
-GATEWAY_IP_ADDRESS = "192.168.50.185"  # Or 'Auto' to scan
-GATEWAY_LOCAL_KEY = "&`8j%*u>LYiAlT~$"
-ZIGBEE_dev_ID = "bfa68b9b7fb66b6e492rot" # This is the 'cid' or 'node_id'
-ZIGBEE_dev_nodeID = "a4c1388fba5285d7"
+GATEWAY_DEVICE_ID = "bf9bac91e4180222c4sjjv"  #bfdf798d4baae73d21oarx"
+GATEWAY_IP_ADDRESS = "192.168.50.214"  # Or 'Auto' to scan
+GATEWAY_LOCAL_KEY = "ZI>n6#I0VW*Xk'X?"
+ZIGBEE_dev_ID = "bf56352539f0a279dcs16n" # This is the 'cid' or 'node_id'
+ZIGBEE_dev_nodeID = "068f30ed807c5451"
 
 # 1. Instantiate the gateway 'Device' object (parent)
 # This object handles the encrypted TCP connection to the gateway.
@@ -25,7 +25,17 @@ gateway = tinytuya.Device(
     version=3.4
 )
 
-status_data = gateway.status()
+sub_devices_result = gateway.subdev_query()
+data_field = sub_devices_result.get('data')
+
+            # 'data_field' will now be {'online': [...], 'offline': [...]}
+print(data_field)
+            # Ensure sub_devices is a dictionary
+online_devices = data_field.get('online', [])
+offline_devices = data_field.get('offline', [])
+print("Online sub-devices:", online_devices)
+print("Offline sub-devices:", offline_devices)
+sub_devices =data_field
 #print(json.dumps(status_data, indent=4))
 # 2. Instantiate the sub-device 'Device' object (child)
 # This object represents the Zigbee switch. It is linked to the gateway via the 'parent' parameter.

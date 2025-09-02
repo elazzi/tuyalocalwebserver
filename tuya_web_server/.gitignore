@@ -1,0 +1,9 @@
+tuya_web_server/devices.json
+tuya_web_server/devicesw.json
+tuya_web_server/snapshot.json
+tuya_web_server/tinytuya.json
+tuya_web_server/tuya-raw.json
+.venev/
+__pycache__/
+venv/
+tuya_web_server/main2.py

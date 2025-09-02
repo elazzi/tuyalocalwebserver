@@ -205,7 +205,7 @@ async def add_device(device: DiscoveredDevice):
         "device_id": device.device_id,
         "local_key": found_device_data.get('key'),
         "name": found_device_data.get('name'),
-        "version": found_device_data.get('version', '3.3'),
+        "version": found_device_data.get('version', '3.4'),
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {}),
         "icon": found_device_data.get('icon'),
@@ -245,6 +245,7 @@ async def add_device_via_gateway(device_data: DeviceViaGateway):
         "product_name": found_device_data.get('product_name'),
         "mapping": found_device_data.get('mapping', {}),
         "icon": found_device_data.get('icon'),
+        "node_id": found_device_data.get('node_id'),
         "gateway_id": device_data.gateway_id, # Link to the gateway
         "control_method": "local", # Sub-devices are always local via gateway
         "default_features": []
@@ -474,13 +475,13 @@ async def get_device_status(device_id: str):
             if gateway_id:
                 gateway_info = devices.get(gateway_id)
                 if not gateway_info: raise HTTPException(status_code=404, detail=f"Gateway device {gateway_id} not found.")
-                gateway_device = tinytuya.Device(dev_id=gateway_info['device_id'], address=gateway_info['ip'], local_key=gateway_info['local_key'], persist=True, version=float(gateway_info.get('version', 3.3)))
+                gateway_device = tinytuya.Device(dev_id=gateway_info['device_id'], address=gateway_info['ip'], local_key=gateway_info['local_key'], persist=True, version=float(gateway_info.get('version', 3.4)))
                 gateway_device.set_socketRetryLimit(1)
-                target_device = tinytuya.Device(dev_id=device_info['device_id'], parent=gateway_device)
+                target_device = tinytuya.Device(dev_id=device_info['device_id'],cid=device_info['node_id'], parent=gateway_device)
             else:
                 if not device_info.get('ip') or not device_info.get('local_key'): raise HTTPException(status_code=500, detail="Device configuration missing IP or local key.")
                 target_device = tinytuya.OutletDevice(dev_id=device_info['device_id'], address=device_info['ip'], local_key=device_info['local_key'])
-                target_device.set_version(float(device_info.get('version', 3.3)))
+                target_device.set_version(float(device_info.get('version', 3.4)))
                 target_device.set_socketRetryLimit(1)
 
             local_status = target_device.status()
@@ -499,7 +500,12 @@ async def get_device_status(device_id: str):
     # If the device is a gateway, query for sub-devices
     if device_info.get('is_gateway'):
         try:
-            gateway_device = tinytuya.Device(dev_id=device_info['device_id'], address=device_info['ip'], local_key=device_info['local_key'], version=float(device_info.get('version', 3.3)))
+            gateway_device = tinytuya.Device(dev_id=device_info['device_id'], 
+                                             address=device_info['ip'], 
+                                             local_key=device_info['local_key'], 
+                                             persist=True,
+                                             version=3.4)
+
             gateway_device.set_socketRetryLimit(1)
             sub_devices_result = gateway_device.subdev_query()
 
